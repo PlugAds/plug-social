@@ -38,7 +38,6 @@ async function dbCarregarClientes() {
 async function dbSalvarCliente(c) {
   const { data: { user } } = await supa.auth.getUser();
   const payload = {nome:c.nome, segmento:c.segmento, cor:c.cor, redes:c.redes};
-  if (user) payload.user_id = user.id;
   const { data, error } = await supa.from('clientes').insert([payload]).select().single();
   if (error) { console.error('Erro ao salvar cliente:', error.message, error.details, error.hint); return null; }
   return data;
@@ -190,7 +189,7 @@ async function liPublicar(post) {
   if (p.get('li_connected') === '1') {
     const nome = decodeURIComponent(p.get('cliente') || 'cliente');
     const clienteId = p.get('cliente_id') || '';
-    window.history.replaceState({}, document.title, '/');
+    window.history.replaceState({}, document.title, window.location.pathname);
     setTimeout(async () => {
       showToast('✅ LinkedIn autorizado para ' + nome + '! Carregando páginas...');
       await new Promise(r => setTimeout(r, 800));
@@ -208,13 +207,13 @@ async function liPublicar(post) {
       'user_cancelled_authorize': 'Autorização cancelada.'
     };
     setTimeout(() => showToast('❌ Erro LinkedIn: ' + (msgs[err] || err)), 500);
-    window.history.replaceState({}, document.title, '/');
+    window.history.replaceState({}, document.title, window.location.pathname);
   }
   if (p.get('connected') === '1') {
     const nome = decodeURIComponent(p.get('cliente') || 'cliente');
     const clienteId = p.get('cliente_id') || '';
     const pagesRaw = p.get('pages') || '[]';
-    window.history.replaceState({}, document.title, '/');
+    window.history.replaceState({}, document.title, window.location.pathname);
     setTimeout(async () => {
       allClientes = await dbCarregarClientes();
       renderClientes();
@@ -230,7 +229,7 @@ async function liPublicar(post) {
   }
   if (p.get('meta_error')) {
     setTimeout(() => showToast('❌ Erro Meta: ' + p.get('meta_error')), 500);
-    window.history.replaceState({}, document.title, '/');
+    window.history.replaceState({}, document.title, window.location.pathname);
   }
 })();
 const META_SCOPE = 'pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish,pages_show_list';
@@ -407,28 +406,42 @@ async function metaPublicar(post) {
     try {
       const {clienteId, clienteNome} = JSON.parse(decodeURIComponent(state));
       supa.from('clientes').update({meta_code:code}).eq('id',clienteId).then(()=>{ showToast('Conta Meta conectada para '+clienteNome+'!'); });
-      window.history.replaceState({},document.title,'/');
+      window.history.replaceState({}, document.title, window.location.pathname);
     } catch(e) {}
   }
 })();
 
-// ── LOGIN ──
-(function() {
-  const SENHA = 'PluG@7354891032';
-  const SK = 'plugsocial_auth';
-  function doLogin() {
-    const inp = document.getElementById('login-password');
-    const err = document.getElementById('login-error');
-    if (inp.value === SENHA) {
-      sessionStorage.setItem(SK,'1');
-      document.getElementById('login-screen').classList.add('hidden');
-      err.classList.remove('show');
-    } else { err.classList.add('show'); inp.value=''; inp.focus(); }
+// ── LOGIN (Supabase Auth) ──
+let appIniciado = false;
+function entrarNoApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  if (!appIniciado) { appIniciado = true; init(); }
+}
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const inp = document.getElementById('login-password');
+  const err = document.getElementById('login-error');
+  const btn = document.querySelector('.login-btn');
+  if (!email || !inp.value) { err.textContent = 'Preencha e-mail e senha.'; err.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  const { error } = await supa.auth.signInWithPassword({ email, password: inp.value });
+  btn.disabled = false; btn.textContent = 'Entrar no sistema →';
+  if (error) {
+    err.textContent = error.message === 'Invalid login credentials' ? 'E-mail ou senha incorretos.' : 'Erro: ' + error.message;
+    err.classList.add('show'); inp.value = ''; inp.focus();
+    return;
   }
-  window.doLogin = doLogin;
-  const ls = document.getElementById('login-screen');
-  if (ls && sessionStorage.getItem(SK)==='1') ls.classList.add('hidden');
-})();
+  err.classList.remove('show');
+  entrarNoApp();
+}
+async function doLogout() {
+  await supa.auth.signOut();
+  window.location.reload();
+}
+async function verificarSessao() {
+  const { data: { session } } = await supa.auth.getSession();
+  if (session) entrarNoApp();
+}
 </script>
 <style>
   :root { --bg:#f4f5f7;--surface:#fff;--surface2:#f0f1f4;--border:#e2e4e9;--accent:#ff5c35;--text:#1a1a2e;--text2:#5a5a72;--text3:#9a9ab0;--green:#16a34a;--blue:#2563eb;--yellow:#d97706;--ig:#e1306c;--fb:#1877f2;--li:#0a66c2; }
@@ -649,8 +662,10 @@ async function metaPublicar(post) {
   <div class="login-box">
     <div class="login-logo">plug<span>.</span>social</div>
     <div class="login-sub">Área restrita — Plug Comunicação</div>
-    <div class="login-label">Senha de acesso</div>
-    <input type="password" class="login-input" id="login-password" placeholder="Digite sua senha..." onkeydown="if(event.key==='Enter')doLogin()" autofocus>
+    <div class="login-label">E-mail</div>
+    <input type="email" class="login-input" id="login-email" placeholder="seu@email.com" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()" autofocus>
+    <div class="login-label">Senha</div>
+    <input type="password" class="login-input" id="login-password" placeholder="Digite sua senha..." autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="login-btn" onclick="doLogin()">Entrar no sistema →</button>
     <div class="login-error" id="login-error">Senha incorreta. Tente novamente.</div>
     <div class="login-footer">Acesso exclusivo para a equipe Plug Comunicação</div>
@@ -683,6 +698,7 @@ async function metaPublicar(post) {
       </div>
       <div style="margin-left:auto;font-size:10px;color:var(--text3)">✏️</div>
     </div>
+    <button onclick="doLogout()" style="width:100%;margin-top:6px;background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:inherit;padding:4px">Sair</button>
   </div>
 </aside>
 
@@ -1875,7 +1891,7 @@ async function init() {
   renderRelatorios();
 }
 
-init();
+verificarSessao();
 </script>
 </body>
 </html>
