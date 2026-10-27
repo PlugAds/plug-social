@@ -379,23 +379,37 @@ async function metaDesconectar(clienteId) {
   showToast('Facebook desconectado.');
 }
 
+let ultimosErrosPublicacao = [];
 async function metaPublicar(post) {
+  ultimosErrosPublicacao = [];
   const { data } = await supa.from('clientes').select('meta_token,meta_ig_id,meta_page_id').eq('nome', post.cliente_nome);
   const c = data && data[0];
   if (!c || !c.meta_token) { showToast('Sem token Meta para este cliente. Conecte primeiro.'); return false; }
+  const graphPost = async (path, body) => {
+    const r = await fetch(`https://graph.facebook.com/v19.0/${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,access_token:c.meta_token})});
+    const j = await r.json();
+    if (j.error) throw new Error(`${j.error.message} (código ${j.error.code})`);
+    return j;
+  };
   let ok = false;
+  const erros = [];
   if (post.redes.includes('ig') && c.meta_ig_id) {
     try {
-      const r = await fetch(`https://graph.facebook.com/v19.0/${c.meta_ig_id}/media`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:post.legenda,image_url:post.midia_url,access_token:c.meta_token})});
-      const j = await r.json();
-      if (j.id) { await fetch(`https://graph.facebook.com/v19.0/${c.meta_ig_id}/media_publish`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({creation_id:j.id,access_token:c.meta_token})}); ok=true; }
-    } catch(e) { console.error('IG:',e); }
+      if (!post.midia_url) throw new Error('o Instagram exige uma imagem');
+      const j = await graphPost(`${c.meta_ig_id}/media`, {caption:post.legenda,image_url:post.midia_url});
+      await graphPost(`${c.meta_ig_id}/media_publish`, {creation_id:j.id});
+      ok = true;
+    } catch(e) { console.error('IG:', e.message); erros.push('Instagram: ' + e.message); }
   }
   if (post.redes.includes('fb') && c.meta_page_id) {
     try {
-      await fetch(`https://graph.facebook.com/v19.0/${c.meta_page_id}/feed`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:post.legenda,access_token:c.meta_token})}); ok=true;
-    } catch(e) { console.error('FB:',e); }
+      if (post.midia_url) await graphPost(`${c.meta_page_id}/photos`, {url:post.midia_url,caption:post.legenda});
+      else await graphPost(`${c.meta_page_id}/feed`, {message:post.legenda});
+      ok = true;
+    } catch(e) { console.error('FB:', e.message); erros.push('Facebook: ' + e.message); }
   }
+  ultimosErrosPublicacao = erros;
+  if (erros.length) showToast((ok ? '⚠️ Publicado em parte — ' : '❌ ') + erros.join(' | '));
   return ok;
 }
 
@@ -1539,11 +1553,10 @@ async function schedulePost() {
     ]);
     if (metaOk || liOk) {
       post.status = 'publicado';
-      showToast('✅ Post publicado com sucesso!');
+      if (!ultimosErrosPublicacao.length) showToast('✅ Post publicado com sucesso!');
     } else {
-      // API falhou — mantém como agendado, não marca como publicado
-      post.status = 'agendado';
-      showToast('📅 Post agendado! As contas serão usadas quando o app for aprovado pelo Meta.');
+      // API falhou — o toast com o erro real já foi exibido por metaPublicar/liPublicar
+      post.status = 'erro';
     }
   } else {
     const dataFormatada = horarioPost.toLocaleDateString('pt-BR') + ' às ' + time;
@@ -1557,7 +1570,7 @@ async function schedulePost() {
     renderPubTable();
     renderCalendar();
     clearForm();
-    const destino = post.status === 'publicado' ? 'publicado' : 'agendado';
+    const destino = post.status;
     setTimeout(() => { pubFilter = destino; showPanel('publicacoes', document.querySelector('[onclick*=publicacoes]')); renderPubTable(); }, 800);
   }
   } finally {
@@ -1668,7 +1681,7 @@ function renderPubTable() {
         ${p._fonte==='rascunho'
           ? `<button onclick="editarRascunho('${p.id}')" style="font-size:11px;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">✏️ Editar</button>
              <button onclick="deletarRascunho('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
-          : p.status === 'agendado'
+          : p.status === 'agendado' || p.status === 'erro'
             ? `<button onclick="publicarAgora('${p.id}')" style="font-size:11px;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">▶ Publicar</button>
                <button onclick="deletarPost('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
             : `<button onclick="deletarPost('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
@@ -1705,17 +1718,13 @@ async function publicarAgora(postId) {
     (post.redes||[]).includes('li') ? liPublicar(post) : Promise.resolve(false)
   ]);
   const algumOk = metaOk || liOk;
-  const novoStatus = algumOk ? 'publicado' : 'com_erro';
+  const novoStatus = algumOk ? 'publicado' : 'erro';
   await supa.from('posts').update({ status: novoStatus }).eq('id', postId);
   const idx = allPosts.findIndex(p => p.id === postId);
   if (idx >= 0) allPosts[idx].status = novoStatus;
   renderPubTable();
   renderDashboard();
-  if (algumOk) {
-    showToast('✅ Post publicado com sucesso!');
-  } else {
-    showToast('❌ Falha ao publicar. Verifique as conexões nas redes.');
-  }
+  if (algumOk && !ultimosErrosPublicacao.length) showToast('✅ Post publicado com sucesso!');
 }
 
 function editarRascunho(id) {
