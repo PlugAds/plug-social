@@ -50,7 +50,7 @@ async function dbCarregarPosts() {
   return data;
 }
 async function dbSalvarPost(p) {
-  const { data, error } = await supa.from('posts').insert([{cliente_nome:p.cliente_nome,legenda:p.legenda,redes:p.redes,data_pub:p.data_pub||null,hora_pub:p.hora_pub||null,status:p.status||'agendado',tipo:p.tipo||'post',midia_url:p.midia_url||null}]).select().single();
+  const { data, error } = await supa.from('posts').insert([{cliente_nome:p.cliente_nome,legenda:p.legenda,redes:p.redes,data_pub:p.data_pub||null,hora_pub:p.hora_pub||null,status:p.status||'agendado',tipo:p.tipo||'post',midia_url:p.midia_url||null,midia_urls:p.midia_urls||null}]).select().single();
   if (error) { console.error(error); return null; }
   return data;
 }
@@ -63,7 +63,7 @@ async function dbCarregarRascunhos() {
   return data;
 }
 async function dbSalvarRascunho(p) {
-  const { data, error } = await supa.from('rascunhos').insert([{cliente_nome:p.cliente_nome,legenda:p.legenda,redes:p.redes,data_pub:p.data_pub||null,hora_pub:p.hora_pub||null,tipo:p.tipo||'post',midia_url:p.midia_url||null}]).select().single();
+  const { data, error } = await supa.from('rascunhos').insert([{cliente_nome:p.cliente_nome,legenda:p.legenda,redes:p.redes,data_pub:p.data_pub||null,hora_pub:p.hora_pub||null,tipo:p.tipo||'post',midia_url:p.midia_url||null,midia_urls:p.midia_urls||null}]).select().single();
   if (error) { console.error(error); return null; }
   return data;
 }
@@ -1484,10 +1484,15 @@ async function schedulePost() {
   const client = document.getElementById('sched-client').value;
   if (!client) { showToast('Selecione um cliente'); return; }
   const caption = document.getElementById('sched-caption').value.trim();
-  if (!caption) { showToast('Digite uma legenda'); return; }
+  const type = document.getElementById('sched-type').value;
+  // Stories não têm legenda nas redes; nos outros tipos ela é obrigatória
+  if (!caption && type !== 'story') { showToast('Digite uma legenda'); return; }
+  if (type === 'story' && mediaFiles.length === 0) { showToast('Story precisa de uma imagem ou vídeo'); return; }
+  if (mediaFiles.some(f => f.src.startsWith('data:'))) { showToast('⚠️ Algum arquivo não terminou de subir. Remova e envie de novo.'); return; }
+  if (type === 'carrossel' && mediaFiles.length < 2) { showToast('Carrossel precisa de pelo menos 2 imagens'); return; }
+  if (type === 'carrossel' && mediaFiles.length > 10) { showToast('Carrossel aceita no máximo 10 arquivos'); return; }
   const date = document.getElementById('sched-date').value;
   const time = document.getElementById('sched-time').value;
-  const type = document.getElementById('sched-type').value;
   const nets = [...document.querySelectorAll('.net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
   if (!nets.length) { showToast('Selecione ao menos uma rede social'); return; }
   const imgSrc = mediaFiles.length > 0 ? mediaFiles[0].src : null;
@@ -1539,7 +1544,7 @@ async function saveDraft() {
   const nets = [...document.querySelectorAll('.net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
   const imgSrc = mediaFiles.length > 0 ? mediaFiles[0].src : null;
 
-  const draft = {cliente_nome:client, legenda:caption, redes:nets, data_pub:date||null, hora_pub:time||null, tipo:type, midia_url:imgSrc};
+  const draft = {cliente_nome:client, legenda:caption, redes:nets, data_pub:date||null, hora_pub:time||null, tipo:type, midia_url:imgSrc, midia_urls:mediaFiles.map(f => f.src)};
   const salvo = await dbSalvarRascunho(draft);
   if (salvo) {
     allRascunhos.unshift(salvo);
@@ -1612,7 +1617,12 @@ function renderPubTable() {
   const statusColor = {agendado:'var(--blue)',publicado:'var(--green)',erro:'#ef4444',rascunho:'var(--text3)'};
   const statusBg = {agendado:'rgba(37,99,235,0.1)',publicado:'rgba(22,163,74,0.1)',erro:'rgba(239,68,68,0.1)',rascunho:'var(--surface2)'};
 
-  rows.innerHTML = filtered.map(p => `
+  rows.innerHTML = filtered.map(p => {
+    const parcial = p.status === 'publicado' && p.resultados_pub && Object.values(p.resultados_pub).some(r => r && r.ok === false);
+    const label = parcial ? 'Parcial' : (statusLabel[p.status]||p.status);
+    const cor = parcial ? 'var(--yellow)' : (statusColor[p.status]||'var(--text3)');
+    const fundo = parcial ? 'rgba(217,119,6,0.1)' : (statusBg[p.status]||'var(--surface2)');
+    return `
     <div class="pub-row">
       <div class="pub-client-info">
         <div style="width:44px;height:44px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${p.midia_url?`<img src="${p.midia_url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`:'📄'}</div>
@@ -1625,7 +1635,7 @@ function renderPubTable() {
       <div class="pub-td">${p.data_pub||'--'}</div>
       <div class="pub-td">${p.hora_pub||'--'}</div>
       <div class="pub-td"><div class="pub-nets">${(p.redes||[]).map(n=>`<div class="pub-net-icon ${n}">${n.toUpperCase()}</div>`).join('')}</div></div>
-      <div class="pub-td"><span class="status-badge" style="background:${statusBg[p.status]||'var(--surface2)'};color:${statusColor[p.status]||'var(--text3)'}">${statusLabel[p.status]||p.status}</span></div>
+      <div class="pub-td"><span class="status-badge" style="background:${fundo};color:${cor}">${label}</span></div>
       <div class="pub-td" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${p._fonte==='rascunho'
           ? `<button onclick="editarRascunho('${p.id}')" style="font-size:11px;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">✏️ Editar</button>
@@ -1637,7 +1647,8 @@ function renderPubTable() {
         }
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function deletarPost(id) {
@@ -1702,9 +1713,8 @@ function editarRascunho(id) {
   document.getElementById('sched-time').value = r.hora_pub || '09:00';
   mediaFiles = [];
   previewCarouselIdx = 0;
-  if (r.midia_url) {
-    mediaFiles.push({ src: r.midia_url, type: r.midia_url.startsWith('data:video') ? 'video' : 'img' });
-  }
+  const urls = (r.midia_urls && r.midia_urls.length) ? r.midia_urls : (r.midia_url ? [r.midia_url] : []);
+  urls.forEach(u => mediaFiles.push({ src: u, type: /^data:video|\.(mp4|mov|avi|m4v)(\?|$)/i.test(u) ? 'video' : 'img' }));
   renderMediaThumbs();
   document.querySelectorAll('.net-check').forEach(n => {
     const net = n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li';
