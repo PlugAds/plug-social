@@ -81,9 +81,9 @@ async function dbSalvarPerfil(p) {
 // ── META API ──
 const META_APP_ID = '4344231035846312';
 const META_REDIRECT = 'https://psfqarqnqxnndzddtatj.supabase.co/functions/v1/meta-oauth';
-const LI_CLIENT_ID = '771z1r20ymvoy0';
+const LI_CLIENT_ID = '774yi4aot5564d'; // app "Plug Social (Páginas)" — Community Management API
 const LI_REDIRECT = 'https://psfqarqnqxnndzddtatj.supabase.co/functions/v1/linkedin-oauth';
-const LI_SCOPE = 'openid,profile,w_member_social';
+const LI_SCOPE = 'r_organization_admin w_organization_social';
 
 function liConectar(clienteId, clienteNome) {
   const state = encodeURIComponent(JSON.stringify({clienteId, clienteNome}));
@@ -93,12 +93,10 @@ function liConectar(clienteId, clienteNome) {
 }
 
 async function liSelecionarPagina(clienteId, clienteNome) {
-  const { data } = await supa.from('clientes').select('li_token').eq('id', clienteId).single();
-  if (!data?.li_token) { showToast('Token LinkedIn nao encontrado.'); return; }
   showToast('Buscando paginas do LinkedIn...');
-  const res = await fetch(`https://psfqarqnqxnndzddtatj.supabase.co/functions/v1/linkedin-pages?token=${encodeURIComponent(data.li_token)}`);
-  const json = await res.json();
-  const paginas = json.pages || [];
+  const { data: json, error } = await supa.functions.invoke('linkedin-pages', { body: { clienteId } });
+  if (error) { console.error('linkedin-pages:', error); showToast('Erro ao buscar páginas do LinkedIn. Use "Inserir ID" manualmente.'); liAbrirModalManual(clienteId, clienteNome); return; }
+  const paginas = json?.pages || [];
   if (paginas.length === 0) { showToast('Nenhuma pagina encontrada. Verifique se voce e admin de alguma pagina.'); return; }
   abrirModalPaginasLI(clienteId, clienteNome, paginas);
 }
@@ -124,7 +122,7 @@ function abrirModalPaginasLI(clienteId, clienteNome, paginas) {
 
 async function liDesconectar(clienteId) {
   if (!confirm('Desconectar LinkedIn deste cliente e reconectar?')) return;
-  await supa.from('clientes').update({ li_token: null, li_org_id: null }).eq('id', clienteId);
+  await supa.from('clientes').update({ li_token: null, li_org_id: null, li_page_name: null, li_token_expira_em: null }).eq('id', clienteId);
   const idx = allClientes.findIndex(c => c.id === clienteId);
   if (idx >= 0) { allClientes[idx].li_token = null; allClientes[idx].li_org_id = null; }
   renderClientes();
@@ -154,34 +152,14 @@ async function liSalvarPagina(clienteId, orgId, orgNome, el) {
   document.querySelectorAll('.li-pagina-item').forEach(i => i.classList.remove('selected'));
   el.classList.add('selected');
   el.querySelector('.li-pagina-check').style.display = 'block';
-  await supa.from('clientes').update({ li_org_id: orgId }).eq('id', clienteId);
+  await supa.from('clientes').update({ li_org_id: orgId, li_page_name: orgNome }).eq('id', clienteId);
   const idx = allClientes.findIndex(c => c.id === clienteId);
-  if (idx >= 0) allClientes[idx].li_org_id = orgId;
+  if (idx >= 0) { allClientes[idx].li_org_id = orgId; allClientes[idx].li_page_name = orgNome; }
   setTimeout(() => {
     document.getElementById('modal-li-paginas').style.display = 'none';
     renderClientes();
     showToast('Pagina "' + orgNome + '" vinculada!');
   }, 600);
-}
-
-async function liPublicar(post) {
-  const { data } = await supa.from('clientes').select('li_token,li_org_id').eq('nome', post.cliente_nome);
-  const c = data && data[0];
-  if (!c || !c.li_token) { showToast('Sem token LinkedIn para este cliente. Conecte primeiro.'); return false; }
-  if (!c.li_org_id) { showToast('ID da organização LinkedIn não encontrado.'); return false; }
-  try {
-    const res = await fetch('https://api.linkedin.com/v2/ugcPosts', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${c.li_token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
-      body: JSON.stringify({
-        author: `urn:li:organization:${c.li_org_id}`,
-        lifecycleState: 'PUBLISHED',
-        specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: post.legenda }, shareMediaCategory: 'NONE' } },
-        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
-      })
-    });
-    return res.ok;
-  } catch(e) { console.error('LI:', e); return false; }
 }
 
 (function checkLiCallback() {
@@ -377,40 +355,6 @@ async function metaDesconectar(clienteId) {
   if (idx >= 0) { allClientes[idx].meta_token = null; allClientes[idx].meta_page_id = null; allClientes[idx].meta_ig_id = null; }
   renderClientes();
   showToast('Facebook desconectado.');
-}
-
-let ultimosErrosPublicacao = [];
-async function metaPublicar(post) {
-  ultimosErrosPublicacao = [];
-  const { data } = await supa.from('clientes').select('meta_token,meta_ig_id,meta_page_id').eq('nome', post.cliente_nome);
-  const c = data && data[0];
-  if (!c || !c.meta_token) { showToast('Sem token Meta para este cliente. Conecte primeiro.'); return false; }
-  const graphPost = async (path, body) => {
-    const r = await fetch(`https://graph.facebook.com/v19.0/${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,access_token:c.meta_token})});
-    const j = await r.json();
-    if (j.error) throw new Error(`${j.error.message} (código ${j.error.code})`);
-    return j;
-  };
-  let ok = false;
-  const erros = [];
-  if (post.redes.includes('ig') && c.meta_ig_id) {
-    try {
-      if (!post.midia_url) throw new Error('o Instagram exige uma imagem');
-      const j = await graphPost(`${c.meta_ig_id}/media`, {caption:post.legenda,image_url:post.midia_url});
-      await graphPost(`${c.meta_ig_id}/media_publish`, {creation_id:j.id});
-      ok = true;
-    } catch(e) { console.error('IG:', e.message); erros.push('Instagram: ' + e.message); }
-  }
-  if (post.redes.includes('fb') && c.meta_page_id) {
-    try {
-      if (post.midia_url) await graphPost(`${c.meta_page_id}/photos`, {url:post.midia_url,caption:post.legenda});
-      else await graphPost(`${c.meta_page_id}/feed`, {message:post.legenda});
-      ok = true;
-    } catch(e) { console.error('FB:', e.message); erros.push('Facebook: ' + e.message); }
-  }
-  ultimosErrosPublicacao = erros;
-  if (erros.length) showToast((ok ? '⚠️ Publicado em parte — ' : '❌ ') + erros.join(' | '));
-  return ok;
 }
 
 (function checkOAuth() {
@@ -1189,6 +1133,15 @@ function renderDashboard() {
 }
 
 // ── CLIENTES ──
+// O token do LinkedIn dura ~60 dias; avisa quando faltar pouco ou já tiver vencido
+function avisoVencimentoLinkedIn(expiraEm) {
+  if (!expiraEm) return '';
+  const dias = Math.ceil((new Date(expiraEm) - new Date()) / 86400000);
+  if (dias > 10) return '';
+  const msg = dias <= 0 ? '⚠️ Conexão do LinkedIn venceu — clique em ↺ para reconectar' : `⚠️ LinkedIn vence em ${dias} dia${dias > 1 ? 's' : ''} — clique em ↺ para renovar`;
+  return `<div style="font-size:11px;color:#d97706;margin-top:4px;text-align:center">${msg}</div>`;
+}
+
 function renderClientes() {
   const grid = document.getElementById('clients-grid');
   document.getElementById('clients-count').textContent = `${allClientes.length} cliente${allClientes.length !== 1 ? 's' : ''} cadastrado${allClientes.length !== 1 ? 's' : ''}`;
@@ -1259,6 +1212,7 @@ function renderClientes() {
           </button>
           <button onclick="liDesconectar('${c.id}')" title="Reconectar LinkedIn" style="padding:8px 10px;background:none;border:1px solid #16a34a;border-radius:8px;cursor:pointer;font-size:13px;color:#16a34a">↺</button>
         </div>
+        ${avisoVencimentoLinkedIn(c.li_token_expira_em)}
       ` : `
         <button class="connect-btn" onclick="liConectar('${c.id}','${c.nome}')" style="background:#0a66c2;margin-top:6px">
           in Conectar LinkedIn
@@ -1541,23 +1495,17 @@ async function schedulePost() {
 
   const post = {cliente_nome:client, legenda:caption, redes:nets, data_pub:date||null, hora_pub:time||null, status:'agendado', tipo:type, midia_url:imgSrc, midia_urls:allMediaSrcs};
 
-  // Só tenta publicar imediatamente se a data/hora já passou (ou não tem data)
-  const agora = new Date();
+  // Quem publica é sempre o servidor (publish-scheduled, a cada minuto).
+  // Sem data/hora ou com horário já passado, o post entra como "agora" e sai em até 1 minuto.
   const horarioPost = date && time ? new Date(date + 'T' + time) : null;
-  const jaPassou = !horarioPost || horarioPost <= agora;
+  const jaPassou = !horarioPost || horarioPost <= new Date();
 
   if (jaPassou) {
-    const [metaOk, liOk] = await Promise.all([
-      nets.includes('ig') || nets.includes('fb') ? metaPublicar(post) : Promise.resolve(false),
-      nets.includes('li') ? liPublicar(post) : Promise.resolve(false)
-    ]);
-    if (metaOk || liOk) {
-      post.status = 'publicado';
-      if (!ultimosErrosPublicacao.length) showToast('✅ Post publicado com sucesso!');
-    } else {
-      // API falhou — o toast com o erro real já foi exibido por metaPublicar/liPublicar
-      post.status = 'erro';
-    }
+    const agora = agoraBrasil();
+    post.data_pub = agora.data;
+    post.hora_pub = agora.hora;
+    showToast('🚀 Enviado para publicação — sai em até 1 minuto.');
+    recarregarPostsEm(75);
   } else {
     const dataFormatada = horarioPost.toLocaleDateString('pt-BR') + ' às ' + time;
     showToast('📅 Post agendado para ' + dataFormatada + '!');
@@ -1607,7 +1555,7 @@ function clearForm() {
   document.getElementById('sched-client').value = '';
   document.getElementById('sched-caption').value = '';
   document.getElementById('sched-type').value = 'post';
-  document.getElementById('sched-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('sched-date').value = agoraBrasil().data;
   document.getElementById('sched-time').value = '09:00';
   mediaFiles = [];
   previewCarouselIdx = 0;
@@ -1660,7 +1608,7 @@ function renderPubTable() {
     return;
   }
 
-  const statusLabel = {agendado:'Agendado',publicado:'Publicado',erro:'Erro',rascunho:'Rascunho'};
+  const statusLabel = {agendado:'Agendado',publicando:'Publicando…',publicado:'Publicado',erro:'Erro',rascunho:'Rascunho'};
   const statusColor = {agendado:'var(--blue)',publicado:'var(--green)',erro:'#ef4444',rascunho:'var(--text3)'};
   const statusBg = {agendado:'rgba(37,99,235,0.1)',publicado:'rgba(22,163,74,0.1)',erro:'rgba(239,68,68,0.1)',rascunho:'var(--surface2)'};
 
@@ -1671,6 +1619,7 @@ function renderPubTable() {
         <div>
           <div class="pub-name">${p.cliente_nome||''}</div>
           <div class="pub-caption">${p.legenda||'(sem legenda)'}</div>
+          ${p.resultados_pub ? Object.entries(p.resultados_pub).filter(([,r])=>r && r.ok===false).map(([rede,r])=>`<div style="font-size:11px;color:#ef4444;margin-top:2px">${{ig:'Instagram',fb:'Facebook',li:'LinkedIn'}[rede]||rede}: ${r.erro}</div>`).join('') : ''}
         </div>
       </div>
       <div class="pub-td">${p.data_pub||'--'}</div>
@@ -1712,19 +1661,35 @@ async function deletarRascunho(id) {
 async function publicarAgora(postId) {
   const post = allPosts.find(p => p.id === postId);
   if (!post) return;
-  showToast('Publicando...');
-  const [metaOk, liOk] = await Promise.all([
-    (post.redes||[]).includes('ig') || (post.redes||[]).includes('fb') ? metaPublicar(post) : Promise.resolve(false),
-    (post.redes||[]).includes('li') ? liPublicar(post) : Promise.resolve(false)
-  ]);
-  const algumOk = metaOk || liOk;
-  const novoStatus = algumOk ? 'publicado' : 'erro';
-  await supa.from('posts').update({ status: novoStatus }).eq('id', postId);
-  const idx = allPosts.findIndex(p => p.id === postId);
-  if (idx >= 0) allPosts[idx].status = novoStatus;
+  // Coloca o post para "agora": o servidor publica na próxima rodada (até 1 minuto)
+  const agora = agoraBrasil();
+  const campos = { status: 'agendado', data_pub: agora.data, hora_pub: agora.hora, resultados_pub: null };
+  const { error } = await supa.from('posts').update(campos).eq('id', postId);
+  if (error) { showToast('❌ Erro: ' + error.message); return; }
+  Object.assign(post, campos);
   renderPubTable();
   renderDashboard();
-  if (algumOk && !ultimosErrosPublicacao.length) showToast('✅ Post publicado com sucesso!');
+  showToast('🚀 Enviado para publicação — sai em até 1 minuto.');
+  recarregarPostsEm(75);
+}
+
+// Data e hora atuais no fuso de Brasília, no formato do banco (AAAA-MM-DD e HH:MM)
+function agoraBrasil() {
+  const [data, hora] = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date()).split(' ');
+  return { data, hora };
+}
+
+// Busca de novo os posts depois que o servidor teve tempo de publicar
+function recarregarPostsEm(segundos) {
+  setTimeout(async () => {
+    allPosts = await dbCarregarPosts();
+    renderPubTable();
+    renderDashboard();
+    renderCalendar();
+  }, segundos * 1000);
 }
 
 function editarRascunho(id) {
@@ -1873,7 +1838,7 @@ async function init() {
   calMonth = now.getMonth();
 
   initCorPicker();
-  document.getElementById('sched-date').value = now.toISOString().split('T')[0];
+  document.getElementById('sched-date').value = agoraBrasil().data;
 
   // Carrega dados do banco em paralelo
   const [clientes, posts, rascunhos, perfil] = await Promise.all([
