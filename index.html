@@ -295,7 +295,7 @@ async function metaSalvarIdManual() {
     return;
   }
 
-  await supa.from('clientes').update({ meta_page_id: pageId, meta_token: pageToken, meta_ig_id: igId, meta_page_name: pageName }).eq('id', clienteId);
+  await supa.from('clientes').update({ meta_page_id: pageId, meta_token: pageToken, meta_ig_id: igId, meta_page_name: pageName, meta_token_erro: null }).eq('id', clienteId);
   const idx = allClientes.findIndex(c => c.id === clienteId);
   if (idx >= 0) {
     allClientes[idx].meta_page_id   = pageId;
@@ -316,6 +316,22 @@ async function metaSalvarPagina(clienteId, pageId, pageName, pageToken, el) {
   el.classList.add('selected');
   el.querySelector('.li-pagina-check').style.display = 'block';
 
+  // Depois de conectar, a lista chega sem tokens (eles não passam pelo endereço da página):
+  // o token da página é pedido à Meta com o token do usuário que ficou salvo no banco
+  if (!pageToken) {
+    const { data: cli } = await supa.from('clientes').select('meta_token').eq('id', clienteId).single();
+    try {
+      const r = await fetch(`https://graph.facebook.com/v19.0/${pageId}?fields=access_token&access_token=${encodeURIComponent(cli?.meta_token || '')}`);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error.message);
+      pageToken = j.access_token;
+    } catch (e) {
+      showToast('❌ Não foi possível obter o acesso à página: ' + e.message);
+      el.classList.remove('selected'); el.querySelector('.li-pagina-check').style.display = 'none';
+      return;
+    }
+  }
+
   // Busca Instagram vinculado à página selecionada
   let igId = null;
   try {
@@ -324,9 +340,9 @@ async function metaSalvarPagina(clienteId, pageId, pageName, pageToken, el) {
     igId = igData.instagram_business_account?.id || null;
   } catch(e) {}
 
-  await supa.from('clientes').update({ meta_page_id: pageId, meta_token: pageToken, meta_ig_id: igId, meta_page_name: pageName }).eq('id', clienteId);
+  await supa.from('clientes').update({ meta_page_id: pageId, meta_token: pageToken, meta_ig_id: igId, meta_page_name: pageName, meta_token_erro: null }).eq('id', clienteId);
   const idx = allClientes.findIndex(c => c.id === clienteId);
-  if (idx >= 0) { allClientes[idx].meta_page_id = pageId; allClientes[idx].meta_token = pageToken; allClientes[idx].meta_ig_id = igId; allClientes[idx].meta_page_name = pageName; }
+  if (idx >= 0) { allClientes[idx].meta_token_erro = null; allClientes[idx].meta_page_id = pageId; allClientes[idx].meta_token = pageToken; allClientes[idx].meta_ig_id = igId; allClientes[idx].meta_page_name = pageName; }
   fetchMetaProfilePhoto(clienteId, pageId, pageToken).then(() => renderClientes());
   setTimeout(() => {
     document.getElementById('modal-meta-paginas').style.display = 'none';
@@ -1200,6 +1216,7 @@ function renderClientes() {
           </button>
           <button onclick="metaDesconectar('${c.id}')" title="Desconectar" style="padding:8px 10px;background:none;border:1px solid #16a34a;border-radius:8px;cursor:pointer;font-size:13px;color:#16a34a">↺</button>
         </div>
+        ${c.meta_token_erro ? `<div style="font-size:11px;color:#dc2626;margin-top:4px;text-align:center" title="${String(c.meta_token_erro).replace(/"/g,'&quot;')}">⚠️ Conexão com Facebook/Instagram perdida — clique em ↺ e conecte de novo</div>` : ''}
       ` : `
         <button class="connect-btn" onclick="metaConectar('${c.id}','${c.nome}')">
           f Conectar Facebook/Instagram
@@ -1510,7 +1527,7 @@ async function schedulePost() {
     post.data_pub = agora.data;
     post.hora_pub = agora.hora;
     showToast('🚀 Enviado para publicação — sai em até 1 minuto.');
-    recarregarPostsEm(75);
+    recarregarPostsEm(30);
   } else {
     const dataFormatada = horarioPost.toLocaleDateString('pt-BR') + ' às ' + time;
     showToast('📅 Post agendado para ' + dataFormatada + '!');
@@ -1591,14 +1608,14 @@ function renderPubTable() {
   // Atualiza contadores
   ['agendado','publicado','erro'].forEach(s => {
     const el = document.getElementById('count-'+s);
-    if (el) el.textContent = allPosts.filter(p=>p.status===s).length;
+    if (el) el.textContent = allPosts.filter(p=>p.status===s || (s==='agendado' && p.status==='publicando')).length;
   });
   const elR = document.getElementById('count-rascunho');
   if (elR) elR.textContent = allRascunhos.length;
 
   let filtered = tudo.filter(p => {
     if (pubFilter === 'rascunho') { if (p._fonte !== 'rascunho') return false; }
-    else { if (p._fonte !== 'post' || p.status !== pubFilter) return false; }
+    else { if (p._fonte !== 'post' || (p.status !== pubFilter && !(pubFilter === 'agendado' && p.status === 'publicando'))) return false; }
     if (texto && !(p.legenda||'').toLowerCase().includes(texto) && !(p.cliente_nome||'').toLowerCase().includes(texto)) return false;
     if (rede && !(p.redes||[]).includes(rede)) return false;
     if (cliente && p.cliente_nome !== cliente) return false;
@@ -1614,7 +1631,7 @@ function renderPubTable() {
   }
 
   const statusLabel = {agendado:'Agendado',publicando:'Publicando…',publicado:'Publicado',erro:'Erro',rascunho:'Rascunho'};
-  const statusColor = {agendado:'var(--blue)',publicado:'var(--green)',erro:'#ef4444',rascunho:'var(--text3)'};
+  const statusColor = {agendado:'var(--blue)',publicando:'var(--blue)',publicado:'var(--green)',erro:'#ef4444',rascunho:'var(--text3)'};
   const statusBg = {agendado:'rgba(37,99,235,0.1)',publicado:'rgba(22,163,74,0.1)',erro:'rgba(239,68,68,0.1)',rascunho:'var(--surface2)'};
 
   rows.innerHTML = filtered.map(p => {
@@ -1629,7 +1646,7 @@ function renderPubTable() {
         <div>
           <div class="pub-name">${p.cliente_nome||''}</div>
           <div class="pub-caption">${p.legenda||'(sem legenda)'}</div>
-          ${p.resultados_pub ? Object.entries(p.resultados_pub).filter(([,r])=>r && r.ok===false).map(([rede,r])=>`<div style="font-size:11px;color:#ef4444;margin-top:2px">${{ig:'Instagram',fb:'Facebook',li:'LinkedIn'}[rede]||rede}: ${r.erro}</div>`).join('') : ''}
+          ${p.resultados_pub && p.status !== 'agendado' && p.status !== 'publicando' ? Object.entries(p.resultados_pub).filter(([,r])=>r && r.ok===false).map(([rede,r])=>`<div style="font-size:11px;color:#ef4444;margin-top:2px">${{ig:'Instagram',fb:'Facebook',li:'LinkedIn'}[rede]||rede}: ${r.erro}</div>`).join('') : ''}
         </div>
       </div>
       <div class="pub-td">${p.data_pub||'--'}</div>
@@ -1682,7 +1699,7 @@ async function publicarAgora(postId) {
   renderPubTable();
   renderDashboard();
   showToast('🚀 Enviado para publicação — sai em até 1 minuto.');
-  recarregarPostsEm(75);
+  recarregarPostsEm(30);
 }
 
 // Data e hora atuais no fuso de Brasília, no formato do banco (AAAA-MM-DD e HH:MM)
@@ -1694,13 +1711,20 @@ function agoraBrasil() {
   return { data, hora };
 }
 
-// Busca de novo os posts depois que o servidor teve tempo de publicar
-function recarregarPostsEm(segundos) {
-  setTimeout(async () => {
+// Busca de novo os posts depois que o servidor teve tempo de publicar e continua
+// conferindo enquanto houver post vencido esperando ou em publicação (vídeos levam até ~2 min)
+let _recarregando = null;
+function recarregarPostsEm(segundos, tentativa = 1) {
+  clearTimeout(_recarregando);
+  _recarregando = setTimeout(async () => {
     allPosts = await dbCarregarPosts();
     renderPubTable();
     renderDashboard();
     renderCalendar();
+    const agora = agoraBrasil();
+    const pendente = allPosts.some(p => p.status === 'publicando' ||
+      (p.status === 'agendado' && p.data_pub && `${p.data_pub} ${(p.hora_pub || '00:00').slice(0, 5)}` <= `${agora.data} ${agora.hora}`));
+    if (pendente && tentativa < 15) recarregarPostsEm(20, tentativa + 1);
   }, segundos * 1000);
 }
 
