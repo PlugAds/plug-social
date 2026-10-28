@@ -1399,7 +1399,7 @@ function updatePreview() {
   const caption = document.getElementById('sched-caption').value;
   const date    = document.getElementById('sched-date').value;
   const time    = document.getElementById('sched-time').value;
-  const nets    = [...document.querySelectorAll('.net-check.checked')].map(n => n.classList.contains('ig') ? 'ig' : n.classList.contains('fb') ? 'fb' : 'li');
+  const nets    = [...document.querySelectorAll('#panel-agendar .net-check.checked')].map(n => n.classList.contains('ig') ? 'ig' : n.classList.contains('fb') ? 'fb' : 'li');
 
   document.getElementById('preview-client-name').textContent = client || 'Cliente';
 
@@ -1493,7 +1493,7 @@ async function schedulePost() {
   if (type === 'carrossel' && mediaFiles.length > 10) { showToast('Carrossel aceita no máximo 10 arquivos'); return; }
   const date = document.getElementById('sched-date').value;
   const time = document.getElementById('sched-time').value;
-  const nets = [...document.querySelectorAll('.net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
+  const nets = [...document.querySelectorAll('#panel-agendar .net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
   if (!nets.length) { showToast('Selecione ao menos uma rede social'); return; }
   const imgSrc = mediaFiles.length > 0 ? mediaFiles[0].src : null;
   const allMediaSrcs = mediaFiles.map(f => f.src);
@@ -1541,7 +1541,7 @@ async function saveDraft() {
   const date = document.getElementById('sched-date').value;
   const time = document.getElementById('sched-time').value;
   const type = document.getElementById('sched-type').value;
-  const nets = [...document.querySelectorAll('.net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
+  const nets = [...document.querySelectorAll('#panel-agendar .net-check.checked')].map(n=>n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li');
   const imgSrc = mediaFiles.length > 0 ? mediaFiles[0].src : null;
 
   const draft = {cliente_nome:client, legenda:caption, redes:nets, data_pub:date||null, hora_pub:time||null, tipo:type, midia_url:imgSrc, midia_urls:mediaFiles.map(f => f.src)};
@@ -1565,7 +1565,7 @@ function clearForm() {
   mediaFiles = [];
   previewCarouselIdx = 0;
   renderMediaThumbs();
-  document.querySelectorAll('.net-check').forEach(n => { n.classList.remove('checked'); if(n.classList.contains('ig')) n.classList.add('checked'); });
+  document.querySelectorAll('#panel-agendar .net-check').forEach(n => { n.classList.remove('checked'); if(n.classList.contains('ig')) n.classList.add('checked'); });
   updatePreview();
 }
 
@@ -1640,8 +1640,8 @@ function renderPubTable() {
         ${p._fonte==='rascunho'
           ? `<button onclick="editarRascunho('${p.id}')" style="font-size:11px;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">✏️ Editar</button>
              <button onclick="deletarRascunho('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
-          : p.status === 'agendado' || p.status === 'erro'
-            ? `<button onclick="publicarAgora('${p.id}')" style="font-size:11px;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">▶ Publicar</button>
+          : p.status === 'agendado' || p.status === 'erro' || parcial
+            ? `<button onclick="publicarAgora('${p.id}')" style="font-size:11px;color:#fff;background:var(--accent);border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">${p.status === 'agendado' ? '▶ Publicar' : '↻ Tentar de novo'}</button>
                <button onclick="deletarPost('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
             : `<button onclick="deletarPost('${p.id}')" style="font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;font-family:inherit">Excluir</button>`
         }
@@ -1674,7 +1674,8 @@ async function publicarAgora(postId) {
   if (!post) return;
   // Coloca o post para "agora": o servidor publica na próxima rodada (até 1 minuto)
   const agora = agoraBrasil();
-  const campos = { status: 'agendado', data_pub: agora.data, hora_pub: agora.hora, resultados_pub: null };
+  // resultados_pub fica: o servidor só reenvia para as redes que falharam
+  const campos = { status: 'agendado', data_pub: agora.data, hora_pub: agora.hora };
   const { error } = await supa.from('posts').update(campos).eq('id', postId);
   if (error) { showToast('❌ Erro: ' + error.message); return; }
   Object.assign(post, campos);
@@ -1716,7 +1717,7 @@ function editarRascunho(id) {
   const urls = (r.midia_urls && r.midia_urls.length) ? r.midia_urls : (r.midia_url ? [r.midia_url] : []);
   urls.forEach(u => mediaFiles.push({ src: u, type: /^data:video|\.(mp4|mov|avi|m4v)(\?|$)/i.test(u) ? 'video' : 'img' }));
   renderMediaThumbs();
-  document.querySelectorAll('.net-check').forEach(n => {
+  document.querySelectorAll('#panel-agendar .net-check').forEach(n => {
     const net = n.classList.contains('ig')?'ig':n.classList.contains('fb')?'fb':'li';
     n.classList.toggle('checked', (r.redes||[]).includes(net));
   });
