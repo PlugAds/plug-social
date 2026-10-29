@@ -231,7 +231,16 @@ async function metaSelecionarPagina(clienteId, clienteNome) {
     while (url) {
       const res = await fetch(url);
       const json = await res.json();
-      if (json.error) { showToast('Erro API: ' + json.error.message); return; }
+      if (json.error) {
+        // Depois de escolher a página, o cliente guarda o token da própria página (que publica e não vence),
+        // e esse token não lista outras páginas: para trocar, é preciso conectar de novo
+        if (json.error.code === 100 && /accounts/.test(json.error.message)) {
+          showToast('Este cliente já está conectado à página escolhida. Para trocar de página, clique em ↺ e conecte de novo.');
+        } else {
+          showToast('Erro API: ' + json.error.message);
+        }
+        return;
+      }
       paginas = paginas.concat((json.data || []).map(p => ({ id: p.id, name: p.name, token: p.access_token })));
       url = json.paging?.cursors?.after
         ? `https://graph.facebook.com/v19.0/me/accounts?limit=100&after=${json.paging.cursors.after}&access_token=${encodeURIComponent(data.meta_token)}`
@@ -239,9 +248,36 @@ async function metaSelecionarPagina(clienteId, clienteNome) {
     }
   } catch(e) { showToast('Erro ao buscar páginas.'); return; }
 
-  if (paginas.length === 0) { showToast('Nenhuma página encontrada. Verifique se você é admin de alguma página.'); return; }
-  showToast(`${paginas.length} página${paginas.length > 1 ? 's' : ''} encontrada${paginas.length > 1 ? 's' : ''}!`);
+  // Páginas acessadas pelo Business Manager não aparecem em /me/accounts, mas ficam vinculadas
+  // à autorização: busca os ids autorizados e completa a lista
+  paginas = paginas.concat(await paginasAutorizadasFaltando(data.meta_token, paginas));
+
+  // A janela abre mesmo sem páginas: ela tem o campo para informar o ID manualmente
+  if (paginas.length === 0) showToast('Nenhuma página encontrada. Informe o ID da página manualmente.');
+  else showToast(`${paginas.length} página${paginas.length > 1 ? 's' : ''} encontrada${paginas.length > 1 ? 's' : ''}!`);
   metaAbrirModal(clienteId, clienteNome, paginas);
+}
+
+// Lê no debug_token as páginas que a pessoa marcou na autorização (granular_scopes) e devolve
+// as que ainda não estão na lista, já com o token de cada página
+async function paginasAutorizadasFaltando(userToken, jaListadas) {
+  try {
+    const t = encodeURIComponent(userToken);
+    const dbg = await (await fetch(`https://graph.facebook.com/v19.0/debug_token?input_token=${t}&access_token=${t}`)).json();
+    const ids = new Set();
+    (dbg.data?.granular_scopes || [])
+      .filter(s => ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement'].includes(s.scope))
+      .forEach(s => (s.target_ids || []).forEach(id => ids.add(String(id))));
+    jaListadas.forEach(p => ids.delete(String(p.id)));
+    const extras = await Promise.all([...ids].map(async id => {
+      const r = await (await fetch(`https://graph.facebook.com/v19.0/${id}?fields=name,access_token&access_token=${t}`)).json();
+      return r.error ? null : { id, name: r.name || `Página ${id}`, token: r.access_token };
+    }));
+    return extras.filter(Boolean);
+  } catch (e) {
+    console.warn('Não foi possível ler as páginas autorizadas:', e);
+    return [];
+  }
 }
 
 function metaAbrirModal(clienteId, clienteNome, paginas) {
@@ -662,6 +698,7 @@ async function verificarSessao() {
     <div class="nav-section">Operação</div>
     <button class="nav-item" onclick="showPanel('inbox',this)"><span class="nav-icon">◎</span> Inbox / SAC</button>
     <button class="nav-item" onclick="showPanel('relatorios',this)"><span class="nav-icon">◫</span> Relatórios</button>
+    <button class="nav-item" onclick="showPanel('armazenamento',this);renderArmazenamento()"><span class="nav-icon">▤</span> Armazenamento</button>
   </nav>
   <div class="sidebar-bottom">
     <div class="user-pill" onclick="document.getElementById('modal-perfil').classList.add('open')" title="Editar perfil">
@@ -909,6 +946,37 @@ async function verificarSessao() {
       </div>
     </div>
 
+    <!-- ARMAZENAMENTO -->
+    <div class="panel" id="panel-armazenamento">
+      <div style="max-width:720px;display:flex;flex-direction:column;gap:16px">
+        <div class="card" style="padding:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-weight:600">Uso do armazenamento</div>
+            <button class="btn btn-ghost" style="font-size:12px" onclick="renderArmazenamento()">↻ Atualizar</button>
+          </div>
+          <div style="height:8px;background:var(--surface2);border-radius:8px;overflow:hidden"><div id="arm-barra" style="height:100%;width:0;background:var(--green);transition:width .3s"></div></div>
+          <div style="display:flex;gap:28px;margin-top:14px;flex-wrap:wrap">
+            <div><div id="arm-usado" style="font-size:22px;font-weight:700">—</div><div style="font-size:11px;color:var(--text3)">usados (Plug Social)</div></div>
+            <div><div id="arm-arquivos" style="font-size:22px;font-weight:700">—</div><div style="font-size:11px;color:var(--text3)">arquivos</div></div>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:12px;line-height:1.6">
+            O plano gratuito do Supabase tem <strong>1 GB</strong> para a organização inteira, <strong>dividido com o Plug Aprova</strong>.
+            As mídias são apagadas automaticamente <strong>7 dias depois de publicadas</strong> (posts com erro ou parciais ficam guardados para tentar de novo).
+          </div>
+        </div>
+        <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+            <div><div style="font-weight:600">Mídias de posts publicados</div><div id="arm-publicados-info" style="font-size:12px;color:var(--text3)">—</div></div>
+            <button class="btn btn-primary" style="font-size:12px;white-space:nowrap" onclick="limparMidiasPublicadas()">🗑 Limpar agora</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--border);padding-top:14px">
+            <div><div style="font-weight:600">Arquivos órfãos</div><div id="arm-orfaos-info" style="font-size:12px;color:var(--text3)">—</div></div>
+            <button class="btn btn-ghost" style="font-size:12px;white-space:nowrap" onclick="limparOrfaos()">🗑 Limpar agora</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- RELATÓRIOS -->
     <div class="panel" id="panel-relatorios">
       <div class="pending-banner">
@@ -1095,7 +1163,7 @@ function showPanel(id, btn) {
   document.getElementById('panel-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  const titles = {dashboard:'Dashboard',clientes:'Clientes',agendar:'Novo agendamento',publicacoes:'Publicações',calendario:'Calendário editorial',inbox:'Inbox / SAC',relatorios:'Relatórios'};
+  const titles = {dashboard:'Dashboard',clientes:'Clientes',agendar:'Novo agendamento',publicacoes:'Publicações',calendario:'Calendário editorial',inbox:'Inbox / SAC',relatorios:'Relatórios',armazenamento:'Armazenamento'};
   document.getElementById('page-title').textContent = titles[id] || id;
 }
 
@@ -1310,13 +1378,38 @@ let mediaFiles = [];
 let previewCarouselIdx = 0;
 let previewActiveNet = null;
 
+// Reduz fotos para no máximo 1440px no lado maior e JPEG 85%: uma foto de celular de 5–8MB vira ~300–600KB.
+// Economiza o armazenamento (1GB dividido com o Plug Aprova) e o download pelas redes. GIFs e arquivos pequenos ficam como estão.
+const LADO_MAXIMO_IMAGEM = 1440;
+async function comprimirImagem(file) {
+  if (file.type === 'image/gif') return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const escala = Math.min(1, LADO_MAXIMO_IMAGEM / Math.max(bitmap.width, bitmap.height));
+    if (escala === 1 && file.size < 400 * 1024) return file;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * escala);
+    canvas.height = Math.round(bitmap.height * escala);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // PNG transparente vira fundo branco (Instagram não aceita transparência)
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (e) {
+    console.warn('Não foi possível comprimir a imagem, enviando a original:', e);
+    return file;
+  }
+}
+
 async function handleFiles(files) {
-  for (const file of [...files]) {
+  for (let file of [...files]) {
     const isVideo = file.type.startsWith('video/');
 
-    // Validar tamanho: 50MB para vídeos, 8MB para imagens
-    const maxSize = isVideo ? 50 * 1024 * 1024 : 8 * 1024 * 1024;
-    const maxLabel = isVideo ? '50MB' : '8MB';
+    // Validar tamanho: 50MB para vídeos, 20MB para imagens (elas são comprimidas antes do upload)
+    const maxSize = isVideo ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+    const maxLabel = isVideo ? '50MB' : '20MB';
     if (file.size > maxSize) {
       showToast(`⚠️ Arquivo muito grande! Máximo ${maxLabel} para ${isVideo ? 'vídeos' : 'imagens'}.`);
       continue;
@@ -1333,6 +1426,7 @@ async function handleFiles(files) {
 
     // Upload para Supabase Storage
     try {
+      if (!isVideo) file = await comprimirImagem(file);
       const ext  = file.name.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
       const path = `posts/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
       const { data, error } = await supa.storage.from('post-images').upload(path, file, { contentType: file.type, upsert: false });
@@ -1642,7 +1736,7 @@ function renderPubTable() {
     return `
     <div class="pub-row">
       <div class="pub-client-info">
-        <div style="width:44px;height:44px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${p.midia_url?`<img src="${p.midia_url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`:'📄'}</div>
+        <div style="width:44px;height:44px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${p.midia_removida?'<span title="Mídia apagada do armazenamento">🗑</span>':p.midia_url?`<img src="${p.midia_url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`:'📄'}</div>
         <div>
           <div class="pub-name">${p.cliente_nome||''}</div>
           <div class="pub-caption">${p.legenda||'(sem legenda)'}</div>
@@ -1670,8 +1764,10 @@ function renderPubTable() {
 
 async function deletarPost(id) {
   if (!confirm('Excluir este post?')) return;
+  const post = allPosts.find(p => p.id === id);
   await dbDeletarPost(id);
   allPosts = allPosts.filter(p => p.id !== id);
+  if (post && !post.midia_removida) apagarMidiasSemUso(caminhosDaMidia(post));
   renderPubTable();
   renderDashboard();
   showToast('Post excluído.');
@@ -1679,11 +1775,116 @@ async function deletarPost(id) {
 
 async function deletarRascunho(id) {
   if (!confirm('Excluir este rascunho?')) return;
+  const rascunho = allRascunhos.find(p => p.id === id);
   await dbDeletarRascunho(id);
   allRascunhos = allRascunhos.filter(p => p.id !== id);
+  if (rascunho) apagarMidiasSemUso(caminhosDaMidia(rascunho));
   renderPubTable();
   renderDashboard();
   showToast('Rascunho excluído.');
+}
+
+// ── ARMAZENAMENTO ──
+// O plano gratuito do Supabase tem 1GB para a organização inteira (dividido com o Plug Aprova)
+const LIMITE_ARMAZENAMENTO = 1024 * 1024 * 1024;
+const PREFIXO_STORAGE = '/storage/v1/object/public/post-images/';
+// Arquivos sem post só são considerados órfãos depois de algumas horas: podem ser de um post sendo montado agora
+const HORAS_PARA_ORFAO = 6;
+
+function caminhosDaMidia(p) {
+  const urls = (p.midia_urls && p.midia_urls.length) ? p.midia_urls : [p.midia_url];
+  return urls.filter(u => u && u.includes(PREFIXO_STORAGE)).map(u => decodeURIComponent(u.split(PREFIXO_STORAGE)[1]));
+}
+
+function caminhosEmUso() {
+  const usados = new Set();
+  [...allPosts.filter(p => !p.midia_removida), ...allRascunhos].forEach(p => caminhosDaMidia(p).forEach(c => usados.add(c)));
+  return usados;
+}
+
+// Apaga do Storage só o que nenhum outro post ou rascunho usa (um rascunho agendado compartilha as mesmas mídias)
+async function apagarMidiasSemUso(caminhos) {
+  const usados = caminhosEmUso();
+  const livres = caminhos.filter(c => !usados.has(c));
+  if (livres.length) await supa.storage.from('post-images').remove(livres);
+}
+
+async function listarArquivosStorage() {
+  const arquivos = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supa.storage.from('post-images').list('posts', { limit: 1000, offset });
+    if (error) throw error;
+    arquivos.push(...data.filter(a => a.id).map(a => ({ ...a, caminho: 'posts/' + a.name, tamanho: a.metadata?.size || 0 })));
+    if (data.length < 1000) break;
+  }
+  return arquivos;
+}
+
+function formatarTamanho(bytes) {
+  return bytes >= 1024 * 1024 * 1024 ? (bytes / 1024 ** 3).toFixed(2) + ' GB' : (bytes / 1024 ** 2).toFixed(1) + ' MB';
+}
+
+// Posts publicados em todas as redes; os parciais ficam de fora porque podem precisar da mídia para tentar de novo
+function postsComMidiaLimpavel() {
+  return allPosts.filter(p => p.status === 'publicado' && !p.midia_removida && caminhosDaMidia(p).length &&
+    !(p.resultados_pub && Object.values(p.resultados_pub).some(r => r && r.ok === false)));
+}
+
+let _arquivosStorage = [];
+async function renderArmazenamento() {
+  try {
+    _arquivosStorage = await listarArquivosStorage();
+  } catch (e) {
+    showToast('❌ Não foi possível ler o armazenamento: ' + e.message);
+    return;
+  }
+  const total = _arquivosStorage.reduce((s, a) => s + a.tamanho, 0);
+  const pct = Math.min(100, total / LIMITE_ARMAZENAMENTO * 100);
+  const barra = document.getElementById('arm-barra');
+  barra.style.width = Math.max(pct, 1) + '%';
+  barra.style.background = pct > 80 ? '#ef4444' : pct > 60 ? 'var(--yellow)' : 'var(--green)';
+  document.getElementById('arm-usado').textContent = formatarTamanho(total);
+  document.getElementById('arm-arquivos').textContent = _arquivosStorage.length;
+
+  const tamanhoDe = new Map(_arquivosStorage.map(a => [a.caminho, a.tamanho]));
+  const publicados = postsComMidiaLimpavel();
+  const bytesPub = publicados.flatMap(caminhosDaMidia).reduce((s, c) => s + (tamanhoDe.get(c) || 0), 0);
+  document.getElementById('arm-publicados-info').textContent =
+    `${publicados.length} post${publicados.length !== 1 ? 's' : ''} publicado${publicados.length !== 1 ? 's' : ''} ainda com mídia · ${formatarTamanho(bytesPub)}`;
+
+  const orfaos = arquivosOrfaos();
+  document.getElementById('arm-orfaos-info').textContent =
+    `${orfaos.length} arquivo${orfaos.length !== 1 ? 's' : ''} sem post nem rascunho · ${formatarTamanho(orfaos.reduce((s, a) => s + a.tamanho, 0))}`;
+}
+
+function arquivosOrfaos() {
+  const usados = caminhosEmUso();
+  const limite = Date.now() - HORAS_PARA_ORFAO * 3600000;
+  return _arquivosStorage.filter(a => !usados.has(a.caminho) && new Date(a.created_at).getTime() < limite);
+}
+
+async function limparMidiasPublicadas() {
+  const publicados = postsComMidiaLimpavel();
+  if (!publicados.length) { showToast('Nenhuma mídia de post publicado para limpar.'); return; }
+  if (!confirm(`Apagar as mídias de ${publicados.length} post(s) já publicado(s)?\n\nOs posts continuam nas redes e no histórico, só a imagem/vídeo sai do armazenamento.`)) return;
+  const ids = publicados.map(p => p.id);
+  const { error } = await supa.from('posts').update({ midia_removida: true }).in('id', ids);
+  if (error) { showToast('❌ Erro: ' + error.message); return; }
+  publicados.forEach(p => { p.midia_removida = true; });
+  await apagarMidiasSemUso(publicados.flatMap(caminhosDaMidia));
+  showToast(`🗑 Mídias de ${ids.length} post(s) apagadas.`);
+  renderPubTable();
+  renderArmazenamento();
+}
+
+async function limparOrfaos() {
+  const orfaos = arquivosOrfaos();
+  if (!orfaos.length) { showToast('Nenhum arquivo órfão.'); return; }
+  if (!confirm(`Apagar ${orfaos.length} arquivo(s) que não pertencem a nenhum post ou rascunho?`)) return;
+  const { error } = await supa.storage.from('post-images').remove(orfaos.map(a => a.caminho));
+  if (error) { showToast('❌ Erro: ' + error.message); return; }
+  showToast(`🗑 ${orfaos.length} arquivo(s) órfão(s) apagados.`);
+  renderArmazenamento();
 }
 
 async function publicarAgora(postId) {
