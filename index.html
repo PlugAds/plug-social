@@ -474,7 +474,7 @@ async function verificarSessao() {
   .nav-item { display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--text2);cursor:pointer;transition:all 0.15s;font-size:13px;font-weight:400;border:none;background:none;width:100%;text-align:left; }
   .nav-item:hover { background:var(--surface2);color:var(--text); }
   .nav-item.active { background:var(--accent);color:#fff; }
-  .nav-icon { font-size:15px;opacity:0.6; }
+  .nav-icon { font-size:15px;opacity:0.6;width:18px;flex-shrink:0;display:inline-flex;justify-content:center;line-height:1; }
   .nav-item.active .nav-icon { opacity:1; }
   .nav-badge { margin-left:auto;background:var(--accent);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:20px; }
   .nav-item.active .nav-badge { background:rgba(255,255,255,0.25); }
@@ -731,7 +731,7 @@ async function verificarSessao() {
   .sidebar .btn-link { color:rgba(255,255,255,.6); } .sidebar .btn-link:hover { color:#fff;background:rgba(255,255,255,.08); }
   .sidebar .nav { scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent; }
   /* telas baixas (notebook, zoom alto): menu mais compacto para todos os itens caberem sem rolar */
-  @media (max-height:780px) {
+  @media (max-height:920px) {
     .sidebar .logo { padding:14px 20px 12px; }
     .sidebar .logo .marca-plug-branca { width:120px !important; }
     .sidebar .nav { padding:8px 12px; }
