@@ -2056,9 +2056,11 @@ function renderCalendar() {
 const META_SCOPE_RELATORIOS = 'ads_read,read_insights,instagram_manage_insights,pages_read_engagement,pages_show_list,instagram_basic,business_management';
 let _contasAnuncio = null;
 
+// auth_type=rerequest: a Meta mostra de novo a escolha de páginas, Instagrams e contas de anúncio,
+// mesmo para quem já autorizou o app (sem isso a janela passa direto)
 function metaConectarRelatorios() {
   const state = encodeURIComponent(JSON.stringify({ modo: 'relatorios' }));
-  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_RELATORIOS}&state=${state}&response_type=code`;
+  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_RELATORIOS}&state=${state}&response_type=code&auth_type=rerequest`;
   window.open(url, '_blank', 'width=620,height=700');
   showToast('Na janela da Meta, marque as páginas, Instagrams e contas de anúncio dos clientes.');
 }
