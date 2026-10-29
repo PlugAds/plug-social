@@ -83,7 +83,9 @@ const META_APP_ID = '4344231035846312';
 const META_REDIRECT = 'https://psfqarqnqxnndzddtatj.supabase.co/functions/v1/meta-oauth';
 const LI_CLIENT_ID = '774yi4aot5564d'; // app "Plug Social (Páginas)" — Community Management API
 const LI_REDIRECT = 'https://psfqarqnqxnndzddtatj.supabase.co/functions/v1/linkedin-oauth';
-const LI_SCOPE = 'r_organization_admin w_organization_social';
+// Escopos liberados pelo Community Management API: listar páginas (rw_organization_admin), publicar (w_organization_social)
+// e ler engajamento dos posts para relatórios futuros (r_organization_social)
+const LI_SCOPE = 'rw_organization_admin w_organization_social r_organization_social';
 
 function liConectar(clienteId, clienteNome) {
   const state = encodeURIComponent(JSON.stringify({clienteId, clienteNome}));
