@@ -205,6 +205,11 @@ async function liSalvarPagina(clienteId, orgId, orgNome, el) {
       }
     }, 600);
   }
+  if (p.get('relatorios_conectado') === '1') {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    if (window.opener) { window.opener.postMessage('relatorios_conectado', '*'); window.close(); }
+    else setTimeout(() => showToast('✅ Conexão de relatórios salva!'), 500);
+  }
   if (p.get('meta_error')) {
     setTimeout(() => showToast('❌ Erro Meta: ' + p.get('meta_error')), 500);
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -664,6 +669,45 @@ async function verificarSessao() {
   .cor-opt { width:28px;height:28px;border-radius:6px;cursor:pointer;transition:transform 0.1s; }
   .cor-opt:hover { transform:scale(1.15); }
   .status-badge { font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px; }
+  /* ── RELATÓRIOS ── */
+  .rel-cabecalho { text-align:center;margin:8px 0 22px; }
+  .rel-cabecalho h2 { font-family:'Syne',sans-serif;font-size:22px;margin-bottom:4px; }
+  .rel-cabecalho div { font-size:12px;color:var(--text3); }
+  .rel-secao { background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px;break-inside:avoid; }
+  .rel-secao h3 { font-family:'Syne',sans-serif;font-size:15px;margin-bottom:14px;display:flex;align-items:center;gap:8px; }
+  .rel-sub { font-size:12px;font-weight:600;color:var(--text2);margin:18px 0 10px; }
+  .rel-kpis { display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px; }
+  .rel-kpi { background:var(--surface2);border-radius:10px;padding:14px;text-align:center; }
+  .rel-kpi-valor { font-family:'Syne',sans-serif;font-size:20px;font-weight:700; }
+  .rel-kpi-rotulo { font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:4px; }
+  .rel-var { display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;margin-top:6px; }
+  .rel-var.bom { color:var(--green);background:rgba(22,163,74,.1); } .rel-var.ruim { color:#dc2626;background:rgba(220,38,38,.1); }
+  .rel-barras { display:flex;align-items:flex-end;gap:3px;height:140px;padding-top:16px; }
+  .rel-barra { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0; }
+  .rel-barra-col { width:100%;border-radius:4px 4px 0 0; }
+  .rel-barra-rot { font-size:9px;color:var(--text3);margin-top:4px;white-space:nowrap; }
+  .rel-barra-val { font-size:9px;color:var(--text2);margin-bottom:2px; }
+  .rel-grid2 { display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px; }
+  .rel-tabela { width:100%;border-collapse:collapse;font-size:12px; }
+  .rel-tabela th { text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--border); }
+  .rel-tabela td { padding:7px 8px;border-bottom:1px solid var(--border); }
+  .rel-tabela td.n, .rel-tabela th.n { text-align:right; }
+  .rel-posts { display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px; }
+  .rel-post { border:1px solid var(--border);border-radius:10px;overflow:hidden;font-size:11px;text-decoration:none;color:var(--text); }
+  .rel-post img { width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--surface2); }
+  .rel-post div { padding:8px; }
+  .rel-legenda-cor { display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:middle; }
+  .rel-aviso { font-size:12px;color:#b45309;background:rgba(217,119,6,.08);border-radius:8px;padding:10px 12px; }
+  @media print {
+    @page { margin:12mm; }
+    body { overflow:visible !important;display:block !important;background:#fff !important; }
+    .sidebar, .topbar, .rel-noprint, .toast, .modal-overlay { display:none !important; }
+    .main { margin:0 !important;height:auto !important;overflow:visible !important; }
+    .content { padding:0 !important; }
+    .panel { display:none !important; } #panel-relatorios { display:block !important; }
+    .rel-secao { border-color:#ddd; } textarea { border:none !important;resize:none; }
+    * { -webkit-print-color-adjust:exact;print-color-adjust:exact; }
+  }
 </style>
 </head>
 <body>
@@ -697,7 +741,7 @@ async function verificarSessao() {
     <button class="nav-item" onclick="showPanel('publicacoes',this)"><span class="nav-icon">≡</span> Publicações</button>
     <div class="nav-section">Operação</div>
     <button class="nav-item" onclick="showPanel('inbox',this)"><span class="nav-icon">◎</span> Inbox / SAC</button>
-    <button class="nav-item" onclick="showPanel('relatorios',this)"><span class="nav-icon">◫</span> Relatórios</button>
+    <button class="nav-item" onclick="showPanel('relatorios',this);renderRelatorios()"><span class="nav-icon">◫</span> Relatórios</button>
     <button class="nav-item" onclick="showPanel('armazenamento',this);renderArmazenamento()"><span class="nav-icon">▤</span> Armazenamento</button>
   </nav>
   <div class="sidebar-bottom">
@@ -979,13 +1023,35 @@ async function verificarSessao() {
 
     <!-- RELATÓRIOS -->
     <div class="panel" id="panel-relatorios">
-      <div class="pending-banner">
-        ⚠️ <strong>Métricas em breve:</strong> dados reais de alcance, engajamento e seguidores requerem aprovação das permissões <code>instagram_manage_insights</code> e <code>pages_read_engagement</code> no Meta. As métricas aparecerão aqui após aprovação.
+      <div id="rel-conexao" class="card rel-noprint" style="padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="font-size:13px"><strong>Conexão Meta para relatórios:</strong> <span id="rel-status">verificando...</span></div>
+        <button class="btn btn-ghost" style="font-size:12px" id="rel-btn-conectar" onclick="metaConectarRelatorios()">Conectar</button>
       </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">Resumo de publicações</div></div>
-        <div style="padding:20px" id="report-summary"></div>
+
+      <div id="rel-form" class="card rel-noprint" style="padding:18px;margin-bottom:20px">
+        <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+          <div class="form-group"><label class="form-label">Cliente</label><select class="form-select" id="rel-cliente" onchange="relClienteMudou()"></select></div>
+          <div class="form-group"><label class="form-label">Conta de anúncio</label><select class="form-select" id="rel-conta" onchange="salvarContaAnuncio()"><option value="">—</option></select></div>
+          <div class="form-group"><label class="form-label">Data inicial</label><input type="date" class="form-input" id="rel-inicio" onchange="relAtualizarComparacao()"></div>
+          <div class="form-group"><label class="form-label">Data final</label><input type="date" class="form-input" id="rel-fim" onchange="relAtualizarComparacao()"></div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-top:14px">
+          <label style="display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" id="rel-comparar" checked onchange="relAtualizarComparacao()"> Comparar com</label>
+          <div class="form-group" style="width:150px"><input type="date" class="form-input" id="rel-comp-inicio"></div>
+          <div class="form-group" style="width:150px"><input type="date" class="form-input" id="rel-comp-fim"></div>
+          <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
+            <div class="net-check fb checked" id="rel-fb" onclick="this.classList.toggle('checked')">f Facebook</div>
+            <div class="net-check ig checked" id="rel-ig" onclick="this.classList.toggle('checked')">📷 Instagram</div>
+            <div class="net-check li checked" id="rel-ads" onclick="this.classList.toggle('checked')">📢 Anúncios</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <button class="btn btn-ghost" id="rel-btn-pdf" onclick="window.print()" style="display:none">⬇ Baixar PDF</button>
+          <button class="btn btn-primary" id="rel-btn-gerar" onclick="gerarRelatorio()">Gerar relatório</button>
+        </div>
       </div>
+
+      <div id="rel-resultado"></div>
     </div>
 
   </div>
@@ -1985,37 +2051,293 @@ function renderCalendar() {
 }
 
 // ── RELATÓRIOS ──
-function renderRelatorios() {
-  const total = allPosts.length;
-  const agendados = allPosts.filter(p=>p.status==='agendado').length;
-  const publicados = allPosts.filter(p=>p.status==='publicado').length;
-  const porCliente = {};
-  allPosts.forEach(p => { porCliente[p.cliente_nome] = (porCliente[p.cliente_nome]||0)+1; });
+// ── RELATÓRIOS ──
+// Conexão única da agência (não por cliente) com as permissões de leitura de anúncios e insights
+const META_SCOPE_RELATORIOS = 'ads_read,read_insights,instagram_manage_insights,pages_read_engagement,pages_show_list,instagram_basic,business_management';
+let _contasAnuncio = null;
 
-  document.getElementById('report-summary').innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
-      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center">
-        <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:700">${total}</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:4px">Posts criados</div>
-      </div>
-      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center">
-        <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:700">${publicados}</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:4px">Publicados</div>
-      </div>
-      <div style="background:var(--surface2);border-radius:10px;padding:16px;text-align:center">
-        <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:700">${agendados}</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:4px">Agendados</div>
-      </div>
+function metaConectarRelatorios() {
+  const state = encodeURIComponent(JSON.stringify({ modo: 'relatorios' }));
+  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_RELATORIOS}&state=${state}&response_type=code`;
+  window.open(url, '_blank', 'width=620,height=700');
+  showToast('Na janela da Meta, marque as páginas, Instagrams e contas de anúncio dos clientes.');
+}
+// A janela da Meta volta para a plataforma com ?relatorios_conectado=1 e avisa a janela principal
+window.addEventListener('message', (e) => {
+  if (e.data === 'relatorios_conectado') { showToast('✅ Conexão de relatórios salva!'); _contasAnuncio = null; carregarStatusRelatorios(); }
+});
+
+async function relChamar(body) {
+  const { data, error } = await supa.functions.invoke('relatorio-meta', { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).erro || msg; } catch (_) { /* resposta sem JSON */ }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function renderRelatorios() {
+  const sel = document.getElementById('rel-cliente');
+  const atual = sel.value;
+  sel.innerHTML = allClientes.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  if (atual) sel.value = atual;
+  if (!document.getElementById('rel-inicio').value) {
+    // Padrão: mês anterior completo
+    const [a, m] = agoraBrasil().data.split('-').map(Number);
+    const ini = new Date(Date.UTC(a, m - 2, 1)), fim = new Date(Date.UTC(a, m - 1, 0));
+    document.getElementById('rel-inicio').value = ini.toISOString().slice(0, 10);
+    document.getElementById('rel-fim').value = fim.toISOString().slice(0, 10);
+    relAtualizarComparacao();
+  }
+  carregarStatusRelatorios();
+}
+
+async function carregarStatusRelatorios() {
+  const st = document.getElementById('rel-status'), btn = document.getElementById('rel-btn-conectar');
+  try {
+    const r = await relChamar({ acao: 'status' });
+    if (!r.conectado) {
+      st.innerHTML = '<span style="color:#dc2626">não conectada</span> — conecte para gerar relatórios.';
+      btn.textContent = 'Conectar'; btn.className = 'btn btn-primary';
+      return;
+    }
+    const dias = r.expira_em ? Math.ceil((new Date(r.expira_em) - new Date()) / 86400000) : null;
+    const validade = dias === null ? '' : dias <= 0 ? ' · <span style="color:#dc2626">venceu, renove</span>'
+      : ` · vence em ${dias} dia${dias !== 1 ? 's' : ''}${dias <= 10 ? ' <span style="color:#d97706">(renove em breve)</span>' : ''}`;
+    st.innerHTML = `conectada como <strong>${r.conta || '—'}</strong>${validade}`;
+    btn.textContent = 'Renovar conexão'; btn.className = 'btn btn-ghost';
+    if (dias === null || dias > 0) carregarContasAnuncio();
+  } catch (e) {
+    st.textContent = 'erro ao verificar: ' + e.message;
+  }
+}
+
+async function carregarContasAnuncio() {
+  if (!_contasAnuncio) {
+    try { _contasAnuncio = (await relChamar({ acao: 'contas' })).contas || []; }
+    catch (e) { showToast('❌ Contas de anúncio: ' + e.message); return; }
+  }
+  document.getElementById('rel-conta').innerHTML = '<option value="">— sem anúncios —</option>' +
+    _contasAnuncio.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  relClienteMudou();
+}
+
+function relClienteMudou() {
+  const c = allClientes.find(c => c.id === document.getElementById('rel-cliente').value);
+  document.getElementById('rel-conta').value = c?.meta_ad_account_id || '';
+}
+
+// A conta de anúncio fica salva no cliente: escolhe uma vez e vale para os próximos relatórios
+async function salvarContaAnuncio() {
+  const c = allClientes.find(c => c.id === document.getElementById('rel-cliente').value);
+  if (!c) return;
+  const sel = document.getElementById('rel-conta');
+  const campos = { meta_ad_account_id: sel.value || null, meta_ad_account_name: sel.value ? sel.selectedOptions[0].textContent : null };
+  const { error } = await supa.from('clientes').update(campos).eq('id', c.id);
+  if (error) { showToast('❌ ' + error.message); return; }
+  Object.assign(c, campos);
+  showToast(sel.value ? `Conta "${campos.meta_ad_account_name}" vinculada a ${c.nome}` : 'Conta de anúncio removida do cliente');
+}
+
+// Comparação padrão: o período de mesmo tamanho imediatamente anterior
+function relAtualizarComparacao() {
+  const ini = document.getElementById('rel-inicio').value, fim = document.getElementById('rel-fim').value;
+  const ligado = document.getElementById('rel-comparar').checked;
+  ['rel-comp-inicio', 'rel-comp-fim'].forEach(id => { document.getElementById(id).disabled = !ligado; });
+  if (!ini || !fim) return;
+  const d = (s) => new Date(s + 'T00:00:00Z'), dias = Math.round((d(fim) - d(ini)) / 86400000) + 1;
+  const compFim = new Date(d(ini) - 86400000), compIni = new Date(compFim - (dias - 1) * 86400000);
+  // Mês inteiro compara com o mês anterior inteiro (setembro → agosto, mesmo com 30 x 31 dias)
+  const mesInteiro = ini.endsWith('-01') && new Date(d(fim).getTime() + 86400000).getUTCDate() === 1;
+  if (mesInteiro) {
+    const pi = new Date(Date.UTC(d(ini).getUTCFullYear(), d(ini).getUTCMonth() - 1, 1));
+    document.getElementById('rel-comp-inicio').value = pi.toISOString().slice(0, 10);
+  } else {
+    document.getElementById('rel-comp-inicio').value = compIni.toISOString().slice(0, 10);
+  }
+  document.getElementById('rel-comp-fim').value = compFim.toISOString().slice(0, 10);
+}
+
+async function gerarRelatorio() {
+  const clienteId = document.getElementById('rel-cliente').value;
+  const inicio = document.getElementById('rel-inicio').value, fim = document.getElementById('rel-fim').value;
+  if (!clienteId || !inicio || !fim) { showToast('Escolha cliente e período'); return; }
+  if (fim < inicio) { showToast('A data final é antes da inicial'); return; }
+  const redes = ['fb', 'ig', 'ads'].filter(r => document.getElementById('rel-' + r).classList.contains('checked'));
+  if (!redes.length) { showToast('Escolha ao menos uma rede'); return; }
+  const comparar = document.getElementById('rel-comparar').checked;
+  const body = { acao: 'gerar', clienteId, inicio, fim, redes,
+    ...(comparar ? { compInicio: document.getElementById('rel-comp-inicio').value, compFim: document.getElementById('rel-comp-fim').value } : {}) };
+
+  const btn = document.getElementById('rel-btn-gerar');
+  btn.disabled = true; btn.textContent = 'Gerando... (pode levar até 1 min)';
+  try {
+    const r = await relChamar(body);
+    document.getElementById('rel-resultado').innerHTML = desenharRelatorio(r);
+    document.getElementById('rel-btn-pdf').style.display = '';
+  } catch (e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Gerar relatório';
+  }
+}
+
+// ── desenho do relatório ──
+const fmtInt = v => Math.round(v || 0).toLocaleString('pt-BR');
+const fmtMoeda = v => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtDec = v => (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtData = s => s.split('-').reverse().join('/');
+const escHtml = t => String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// Variação em relação ao período anterior; em custos (CPC, CPM) cair é bom
+function variacao(atual, anterior, menorMelhor) {
+  if (anterior === undefined || anterior === null || !anterior) return '';
+  const pct = (atual - anterior) / anterior * 100;
+  if (!isFinite(pct)) return '';
+  const bom = menorMelhor ? pct <= 0 : pct >= 0;
+  const casas = Math.abs(pct) < 1 ? 2 : 1;
+  return `<div class="rel-var ${bom ? 'bom' : 'ruim'}">${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct).toFixed(casas).replace('.', ',')}%</div>`;
+}
+function kpi(rotulo, valor, fmt, anterior, menorMelhor) {
+  return `<div class="rel-kpi"><div class="rel-kpi-valor">${fmt(valor)}</div><div class="rel-kpi-rotulo">${rotulo}</div>${variacao(valor, anterior, menorMelhor)}</div>`;
+}
+function barras(itens, cor, fmt = fmtInt) {
+  const max = Math.max(1, ...itens.map(i => i.valor));
+  return `<div class="rel-barras">${itens.map(i => `<div class="rel-barra" title="${escHtml(i.rotulo)}: ${fmt(i.valor)}">
+    <div class="rel-barra-val">${i.valor ? fmt(i.valor) : ''}</div>
+    <div class="rel-barra-col" style="height:${i.valor / max * 100}%;background:${cor}"></div>
+    <div class="rel-barra-rot">${escHtml(i.rotulo)}</div></div>`).join('')}</div>`;
+}
+// Barras agrupadas (ex.: impressões x alcance por idade)
+function barrasDuplas(grupos, series) {
+  const max = Math.max(1, ...grupos.flatMap(g => series.map(s => g[s.chave] || 0)));
+  return `<div>${series.map(s => `<span class="rel-legenda-cor" style="background:${s.cor}"></span><span style="font-size:11px">${s.nome}</span>`).join('')}</div>
+    <div class="rel-barras">${grupos.map(g => `<div class="rel-barra" style="flex-direction:column">
+      <div style="display:flex;gap:2px;align-items:flex-end;height:100%;width:100%">${series.map(s => `<div class="rel-barra-col" title="${s.nome}: ${fmtInt(g[s.chave])}" style="flex:1;height:${(g[s.chave] || 0) / max * 100}%;background:${s.cor}"></div>`).join('')}</div>
+      <div class="rel-barra-rot">${escHtml(g.rotulo)}</div></div>`).join('')}</div>`;
+}
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+function melhoresMomentos(posts, cor) {
+  if (!posts || !posts.horas) return '';
+  const h = posts.horas.indexOf(Math.max(...posts.horas)), d = posts.dias.indexOf(Math.max(...posts.dias));
+  const resumo = Math.max(...posts.horas) > 0 ? `<div style="font-size:12px;color:var(--text2);margin-top:8px">Mais interações nos posts das <strong>${h}h</strong> e às <strong>${['domingos', 'segundas', 'terças', 'quartas', 'quintas', 'sextas', 'sábados'][d]}</strong>.</div>` : '';
+  return `<div class="rel-grid2">
+    <div><div class="rel-sub">Melhores horários para postar</div>${barras(posts.horas.map((v, i) => ({ rotulo: i % 3 === 0 ? i + 'h' : '', valor: v })), cor)}</div>
+    <div><div class="rel-sub">Melhores dias da semana</div>${barras(posts.dias.map((v, i) => ({ rotulo: DIAS_SEMANA[i], valor: v })), cor)}</div>
+  </div>${resumo}`;
+}
+function postsDestaque(lista, rotulo) {
+  if (!lista || !lista.length) return '';
+  return `<div class="rel-sub">Posts com mais interações</div><div class="rel-posts">${lista.map(p => `
+    <a class="rel-post" href="${p.link || '#'}" target="_blank">
+      ${p.imagem ? `<img src="${p.imagem}" loading="lazy" onerror="this.style.display='none'">` : ''}
+      <div><strong>${fmtInt(p.interacoes)}</strong> ${rotulo}<br><span style="color:var(--text3)">${new Date(p.quando).toLocaleDateString('pt-BR')}</span></div>
+    </a>`).join('')}</div>`;
+}
+const erroBloco = (titulo, b) => `<div class="rel-secao"><h3>${titulo}</h3><div class="rel-aviso">⚠️ ${escHtml(b.erro)}</div></div>`;
+
+// Nomes legíveis para as ações mais comuns da API de anúncios; as demais aparecem com o nome original da Meta
+const NOMES_ACOES = {
+  link_click: 'Cliques no link', landing_page_view: 'Visualizações da página de destino', lead: 'Leads',
+  'onsite_conversion.lead_grouped': 'Leads (formulário)', post_engagement: 'Engajamento com publicações',
+  page_engagement: 'Engajamento com a página', post_reaction: 'Reações', comment: 'Comentários', post: 'Compartilhamentos',
+  'onsite_conversion.post_save': 'Publicações salvas', video_view: 'Visualizações de vídeo', like: 'Curtidas da página',
+  'onsite_conversion.messaging_conversation_started_7d': 'Conversas iniciadas (7 dias)',
+  'onsite_conversion.messaging_first_reply': 'Primeiras respostas de mensagem',
+  'onsite_conversion.total_messaging_connection': 'Conexões por mensagem', purchase: 'Compras',
+  'offsite_conversion.fb_pixel_lead': 'Leads no site (pixel)', 'offsite_conversion.fb_pixel_purchase': 'Compras no site (pixel)'
+};
+
+function secaoAds(a, ant) {
+  if (!a) return '';
+  if (a.erro) return erroBloco('📢 Anúncios — Facebook Ads / Instagram Ads', a);
+  const r = a.resumo, p = ant && !ant.erro ? ant.resumo : {};
+  const plat = (nome, chave) => {
+    const x = a.plataformas[chave]; if (!x) return '';
+    return `<tr><td><strong>${nome}</strong></td><td class="n">${fmtInt(x.alcance)}</td><td class="n">${fmtInt(x.impressoes)}</td><td class="n">${fmtInt(x.cliques)}</td>
+      <td class="n">${fmtMoeda(x.gasto)}</td><td class="n">${fmtMoeda(x.cpc)}</td><td class="n">${fmtMoeda(x.cpm)}</td><td class="n">${fmtDec(x.ctr)}%</td><td class="n">${fmtDec(x.frequencia)}</td></tr>`;
+  };
+  const acoes = (r.acoes || []).slice(0, 15);
+  const generoNome = { female: 'Feminino', male: 'Masculino', unknown: 'Indefinido' };
+  return `<div class="rel-secao"><h3>📢 Anúncios — Facebook Ads / Instagram Ads</h3>
+    <div class="rel-kpis">
+      ${kpi('Alcance', r.alcance, fmtInt, p.alcance)}${kpi('Impressões', r.impressoes, fmtInt, p.impressoes)}
+      ${kpi('Cliques', r.cliques, fmtInt, p.cliques)}${kpi('Investimento', r.gasto, fmtMoeda, p.gasto)}
+      ${kpi('CPC', r.cpc, fmtMoeda, p.cpc, true)}${kpi('CPM', r.cpm, fmtMoeda, p.cpm, true)}
+      ${kpi('CTR', r.ctr, v => fmtDec(v) + '%', p.ctr)}${kpi('Frequência', r.frequencia, fmtDec, p.frequencia)}
     </div>
-    ${Object.keys(porCliente).length > 0 ? `
-    <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;margin-bottom:12px">Posts por cliente</div>
-    ${Object.entries(porCliente).sort((a,b)=>b[1]-a[1]).map(([nome,qtd]) => `
-      <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
-        <div style="flex:1;font-size:13px">${nome}</div>
-        <div style="font-size:13px;font-weight:600;color:var(--accent)">${qtd} post${qtd!==1?'s':''}</div>
-      </div>
-    `).join('')}` : '<div style="color:var(--text3);font-size:13px">Nenhum post criado ainda.</div>'}
-  `;
+    <div class="rel-sub">Por plataforma</div>
+    <table class="rel-tabela"><tr><th></th><th class="n">Alcance</th><th class="n">Impressões</th><th class="n">Cliques</th><th class="n">Investimento</th><th class="n">CPC</th><th class="n">CPM</th><th class="n">CTR</th><th class="n">Freq.</th></tr>
+      ${plat('Facebook', 'facebook')}${plat('Instagram', 'instagram')}${plat('Audience Network', 'audience_network')}${plat('Messenger', 'messenger')}</table>
+    ${acoes.length ? `<div class="rel-sub">Principais ações</div><table class="rel-tabela"><tr><th>Ação</th><th class="n">Quantidade</th></tr>
+      ${acoes.map(x => `<tr><td>${NOMES_ACOES[x.tipo] || x.tipo}</td><td class="n">${fmtInt(x.valor)}</td></tr>`).join('')}</table>` : ''}
+    <div class="rel-grid2">
+      ${a.genero?.length ? `<div><div class="rel-sub">Impressões e alcance por gênero</div>${barrasDuplas(a.genero.map(g => ({ rotulo: generoNome[g.faixa] || g.faixa, impressoes: g.impressoes, alcance: g.alcance })), [{ chave: 'impressoes', nome: 'Impressões', cor: '#f87171' }, { chave: 'alcance', nome: 'Alcance', cor: '#3b82f6' }])}</div>` : ''}
+      ${a.idade?.length ? `<div><div class="rel-sub">Impressões e alcance por idade</div>${barrasDuplas(a.idade.map(g => ({ rotulo: g.faixa === 'Unknown' ? '?' : g.faixa, impressoes: g.impressoes, alcance: g.alcance })), [{ chave: 'impressoes', nome: 'Impressões', cor: '#f87171' }, { chave: 'alcance', nome: 'Alcance', cor: '#3b82f6' }])}</div>` : ''}
+    </div></div>`;
+}
+
+function secaoInstagram(ig, ant) {
+  if (!ig) return '';
+  if (ig.erro) return erroBloco('📷 Instagram', ig);
+  const t = ig.totais, p = ant && !ant.erro ? ant.totais : {};
+  const saldo = t.novos_seguidores - t.deixaram_de_seguir;
+  let demo = '';
+  if (Array.isArray(ig.demografia) && ig.demografia.length) {
+    const faixas = [...new Set(ig.demografia.map(d => d.idade))].sort();
+    const val = (f, g) => ig.demografia.filter(d => d.idade === f && d.genero === g).reduce((s, d) => s + d.valor, 0);
+    const tot = g => ig.demografia.filter(d => d.genero === g).reduce((s, d) => s + d.valor, 0);
+    demo = `<div class="rel-grid2">
+      <div><div class="rel-sub">Seguidores por gênero</div>${barras([{ rotulo: 'Feminino', valor: tot('F') }, { rotulo: 'Masculino', valor: tot('M') }, { rotulo: 'Indefinido', valor: tot('U') }], '#ec4899')}</div>
+      <div><div class="rel-sub">Gênero por idade</div>${barrasDuplas(faixas.map(f => ({ rotulo: f, F: val(f, 'F'), M: val(f, 'M'), U: val(f, 'U') })), [{ chave: 'F', nome: 'Feminino', cor: '#f87171' }, { chave: 'M', nome: 'Masculino', cor: '#3b82f6' }, { chave: 'U', nome: 'Indefinido', cor: '#facc15' }])}</div>
+    </div><div style="font-size:11px;color:var(--text3);margin-top:6px">Público: dados dos últimos 30 dias (limite da Meta).</div>`;
+  } else if (ig.demografia?.erro) {
+    demo = `<div class="rel-aviso" style="margin-top:12px">Público indisponível: ${escHtml(ig.demografia.erro)}</div>`;
+  }
+  return `<div class="rel-secao"><h3>📷 Instagram ${ig.perfil?.usuario ? '— @' + escHtml(ig.perfil.usuario) : ''}</h3>
+    <div class="rel-kpis">
+      ${kpi('Seguidores (hoje)', ig.perfil?.seguidores, fmtInt)}
+      ${kpi('Novos seguidores', t.novos_seguidores, fmtInt, p.novos_seguidores)}
+      ${kpi('Deixaram de seguir', t.deixaram_de_seguir, fmtInt, p.deixaram_de_seguir, true)}
+      ${kpi('Saldo', saldo, v => (v > 0 ? '+' : '') + fmtInt(v), p.novos_seguidores !== undefined ? p.novos_seguidores - p.deixaram_de_seguir : undefined)}
+      ${t.reach !== undefined ? kpi('Alcance', t.reach, fmtInt, p.reach) : ''}
+      ${t.accounts_engaged !== undefined ? kpi('Contas engajadas', t.accounts_engaged, fmtInt, p.accounts_engaged) : ''}
+      ${t.total_interactions !== undefined ? kpi('Interações', t.total_interactions, fmtInt, p.total_interactions) : ''}
+      ${t.profile_views !== undefined ? kpi('Visitas ao perfil', t.profile_views, fmtInt, p.profile_views) : ''}
+      ${kpi('Posts no período', ig.posts?.quantidade, fmtInt)}
+    </div>
+    ${demo}${melhoresMomentos(ig.posts, '#e1306c')}${postsDestaque(ig.posts?.destaques, 'curtidas + comentários')}</div>`;
+}
+
+function secaoFacebook(fb, ant) {
+  if (!fb) return '';
+  if (fb.erro) return erroBloco('📘 Facebook', fb);
+  const t = fb.totais, p = ant && !ant.erro ? ant.totais : {};
+  const serie = fb.serie || [];
+  return `<div class="rel-secao"><h3>📘 Facebook ${fb.pagina?.nome ? '— ' + escHtml(fb.pagina.nome) : ''}</h3>
+    <div class="rel-kpis">
+      ${kpi('Seguidores (hoje)', fb.pagina?.seguidores, fmtInt)}
+      ${kpi('Engajamento', t.engajamento, fmtInt, p.engajamento)}
+      ${kpi('Posts no período', t.posts, fmtInt, p.posts)}
+      ${kpi('Interações nos posts', t.interacoes_posts, fmtInt, p.interacoes_posts)}
+    </div>
+    ${serie.length ? `<div class="rel-sub">Engajamento por dia</div>${barras(serie.map((v, i) => ({ rotulo: i % Math.ceil(serie.length / 10) === 0 ? v.dia.slice(8) + '/' + v.dia.slice(5, 7) : '', valor: v.valor })), '#1877f2')}` : ''}
+    ${melhoresMomentos(fb.posts, '#1877f2')}${postsDestaque(fb.posts?.destaques, 'interações')}</div>`;
+}
+
+function desenharRelatorio(r) {
+  const c = allClientes.find(c => c.nome === r.cliente);
+  const comp = r.comparacao ? ` · comparado com ${fmtData(r.comparacao.inicio)} a ${fmtData(r.comparacao.fim)}` : '';
+  return `<div class="rel-cabecalho">
+      ${c?.foto_url ? `<img src="${c.foto_url}" style="width:64px;height:64px;border-radius:12px;object-fit:cover;margin-bottom:8px" onerror="this.remove()">` : ''}
+      <h2>Relatório — ${escHtml(r.cliente)}</h2>
+      <div>Período de ${fmtData(r.periodo.inicio)} a ${fmtData(r.periodo.fim)}${comp}</div>
+      <div style="margin-top:2px">Gerado por Plug Comunicação em ${new Date().toLocaleDateString('pt-BR')}</div>
+    </div>
+    ${secaoAds(r.ads, r.anterior?.ads)}${secaoInstagram(r.ig, r.anterior?.ig)}${secaoFacebook(r.fb, r.anterior?.fb)}
+    <div class="rel-secao"><h3>💡 Análise da Plug Comunicação</h3>
+      <textarea class="form-textarea" style="min-height:110px" placeholder="Destaques do período, recomendações e próximos passos (aparece no PDF)..."></textarea></div>`;
 }
 
 // ── PERFIL ──
