@@ -521,6 +521,9 @@ async function verificarSessao() {
   @media (max-width:640px) { .clients-grid { grid-template-columns:minmax(0,1fr); } }
   .client-card { background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;min-width:0;transition:border-color 0.2s,transform 0.2s; }
   .client-card:hover { border-color:var(--text3);transform:translateY(-1px); }
+  /* cards alternados: branco e cinza claro (no cinza, os números ficam em caixas brancas) */
+  .client-card:nth-child(even) { background:#e8e8f0; }
+  .client-card:nth-child(even) .client-stat { background:var(--surface); }
   .client-header { display:flex;align-items:center;gap:12px;margin-bottom:12px;min-width:0; }
   .client-header > div:last-child { min-width:0; } .client-name, .client-segment { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
   .client-avatar { width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:'Exo',sans-serif;font-weight:800;font-size:14px;color:#fff;flex-shrink:0; }
@@ -716,6 +719,17 @@ async function verificarSessao() {
   .connect-btn.connected:hover { background:#dff3e6 !important; }
   .nav-item.active { background:var(--navy) !important;color:#fff; }
 
+  /* ── MENU LATERAL AZUL-ESCURO ── */
+  .sidebar { background:var(--navy-escuro);border-right:none; }
+  .sidebar .logo, .sidebar .sidebar-bottom { border-color:rgba(255,255,255,.1); }
+  .sidebar .logo-sub, .sidebar .nav-section { color:rgba(255,255,255,.5); }
+  .sidebar .nav-item { color:rgba(255,255,255,.78); }
+  .sidebar .nav-item:hover { background:rgba(255,255,255,.08);color:#fff; }
+  .sidebar .nav-item.active { background:var(--accent) !important;color:#fff; }
+  .sidebar .user-pill:hover { background:rgba(255,255,255,.08); }
+  .sidebar .user-name { color:#fff; } .sidebar .user-role { color:rgba(255,255,255,.6); }
+  .sidebar .btn-link { color:rgba(255,255,255,.6); } .sidebar .btn-link:hover { color:#fff;background:rgba(255,255,255,.08); }
+
   /* ── RELATÓRIO NO TIMBRADO ── */
   .rel-timbrado-fundo { display:none; }
   .rel-papel { width:100%;border-collapse:collapse; }
@@ -794,7 +808,7 @@ async function verificarSessao() {
 
 <aside class="sidebar">
   <div class="logo">
-    <div class="marca-plug" role="img" aria-label="Plug Comunicação" style="width:150px"></div>
+    <div class="marca-plug-branca" role="img" aria-label="Plug Comunicação" style="width:150px"></div>
     <div class="logo-sub" style="margin-top:8px">Social · Gestão de redes</div>
   </div>
   <nav class="nav">
@@ -1374,7 +1388,11 @@ function avisoVencimentoLinkedIn(expiraEm) {
   return `<div style="font-size:11px;color:#d97706;margin-top:4px;text-align:center">${msg}</div>`;
 }
 
+// Ordem alfabética ignorando maiúsculas e acentos (o banco põe "Ótica" depois de "Zuhri")
+const ordenarClientes = () => allClientes.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { sensitivity: 'base' }));
+
 function renderClientes() {
+  ordenarClientes();
   const grid = document.getElementById('clients-grid');
   document.getElementById('clients-count').textContent = `${allClientes.length} cliente${allClientes.length !== 1 ? 's' : ''} cadastrado${allClientes.length !== 1 ? 's' : ''}`;
 
@@ -2653,6 +2671,7 @@ async function init() {
   ]);
 
   allClientes = clientes;
+  ordenarClientes();
   allPosts = posts;
   allRascunhos = rascunhos;
 
