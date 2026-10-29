@@ -2062,11 +2062,13 @@ let _contasAnuncio = null;
 
 // auth_type=rerequest: a Meta mostra de novo a escolha de páginas, Instagrams e contas de anúncio,
 // mesmo para quem já autorizou o app (sem isso a janela passa direto)
+// Complemento: guarda os tokens das páginas que a pessoa administra (clientes fora do portfólio da Plug).
+// Não substitui o usuário do sistema; tokens de página não vencem.
 function metaConectarRelatorios() {
   const state = encodeURIComponent(JSON.stringify({ modo: 'relatorios' }));
   const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_RELATORIOS}&state=${state}&response_type=code&auth_type=rerequest`;
   window.open(url, '_blank', 'width=620,height=700');
-  showToast('Na janela da Meta, marque as páginas, Instagrams e contas de anúncio dos clientes.');
+  showToast('Na janela da Meta, marque as páginas dos clientes que não estão no portfólio da Plug.');
 }
 // A janela da Meta volta para a plataforma com ?relatorios_conectado=1 e avisa a janela principal
 window.addEventListener('message', (e) => {
@@ -2103,17 +2105,18 @@ async function carregarStatusRelatorios() {
   const st = document.getElementById('rel-status'), btn = document.getElementById('rel-btn-conectar');
   try {
     const r = await relChamar({ acao: 'status' });
-    if (!r.conectado) {
-      st.innerHTML = '<span style="color:#dc2626">não conectada</span> — conecte para gerar relatórios.';
-      btn.textContent = 'Conectar'; btn.className = 'btn btn-primary';
-      return;
+    const partes = [];
+    if (r.conectado) {
+      const dias = r.expira_em ? Math.ceil((new Date(r.expira_em) - new Date()) / 86400000) : null;
+      const validade = dias === null ? '' : dias <= 0 ? ' <span style="color:#dc2626">(venceu)</span>' : ` (vence em ${dias} dia${dias !== 1 ? 's' : ''})`;
+      partes.push(`<strong>${r.conta || '—'}</strong>${validade}`);
     }
-    const dias = r.expira_em ? Math.ceil((new Date(r.expira_em) - new Date()) / 86400000) : null;
-    const validade = dias === null ? '' : dias <= 0 ? ' · <span style="color:#dc2626">venceu, renove</span>'
-      : ` · vence em ${dias} dia${dias !== 1 ? 's' : ''}${dias <= 10 ? ' <span style="color:#d97706">(renove em breve)</span>' : ''}`;
-    st.innerHTML = `conectada como <strong>${r.conta || '—'}</strong>${validade}`;
-    btn.textContent = 'Renovar conexão'; btn.className = 'btn btn-ghost';
-    if (dias === null || dias > 0) carregarContasAnuncio();
+    if (r.complemento) partes.push(`complemento de <strong>${r.complemento.conta || '—'}</strong> · ${r.complemento.paginas} página${r.complemento.paginas !== 1 ? 's' : ''}`);
+    st.innerHTML = partes.length ? partes.join(' + ') : '<span style="color:#dc2626">não conectada</span> — conecte para gerar relatórios.';
+    btn.textContent = r.complemento ? 'Atualizar complemento' : 'Conectar complemento';
+    btn.className = partes.length ? 'btn btn-ghost' : 'btn btn-primary';
+    btn.title = 'Para clientes fora do portfólio da Plug: conecte com uma conta que é admin das páginas e marque-as na janela da Meta';
+    if (r.conectado) carregarContasAnuncio();
   } catch (e) {
     st.textContent = 'erro ao verificar: ' + e.message;
   }
@@ -2125,13 +2128,15 @@ async function diagnosticoRelatorios() {
   box.innerHTML = '<div class="card" style="padding:14px;margin-bottom:16px;font-size:13px">Verificando...</div>';
   try {
     const r = await relChamar({ acao: 'diagnostico' });
-    const cel = v => `<td style="color:${v === 'ok' ? 'var(--green)' : v.startsWith('sem') || v === 'não escolhida' ? 'var(--text3)' : '#dc2626'}">${v === 'ok' ? '✅' : v}</td>`;
+    const cel = v => `<td style="color:${v.startsWith('ok') ? 'var(--green)' : v.startsWith('sem acesso') ? '#dc2626' : 'var(--text3)'};font-size:11px">${v === 'ok' ? '✅' : v === 'ok (complemento)' ? '✅ <span style="color:var(--text3)">complemento</span>' : escHtml(v)}</td>`;
     box.innerHTML = `<div class="card" style="padding:16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center"><strong style="font-size:13px">O que a conexão de relatórios enxerga</strong>
         <button class="btn btn-ghost" style="font-size:11px" onclick="document.getElementById('rel-diagnostico').innerHTML=''">Fechar</button></div>
       <table class="rel-tabela" style="margin-top:10px"><tr><th>Cliente</th><th>Página (Facebook)</th><th>Instagram</th><th>Conta de anúncio</th></tr>
         ${r.clientes.map(c => `<tr><td>${escHtml(c.nome)}</td>${cel(c.pagina)}${cel(c.instagram)}${cel(c.anuncio)}</tr>`).join('')}</table>
-      <div style="font-size:11px;color:var(--text3);margin-top:8px">"Não liberada" = a página/Instagram não foi marcado na janela da Meta ao conectar. Clique em "Renovar conexão" e marque.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.6">"ok" = pelo usuário do sistema (portfólio da Plug) · "ok (complemento)" = pelo token de página da conexão complementar.<br>
+        "Sem acesso" na página/Instagram: se o cliente está no portfólio, atribua o ativo ao relatoriosplug no Business Manager; se não está, peça acesso de admin à página e clique em "Conectar complemento".<br>
+        "Sem acesso" na conta de anúncio: atribua a conta ao relatoriosplug (Business Manager → Usuários do sistema → Atribuir ativos → Contas de anúncios).</div>
     </div>`;
   } catch (e) {
     box.innerHTML = `<div class="card rel-aviso" style="margin-bottom:16px">Diagnóstico falhou: ${escHtml(e.message)}</div>`;
