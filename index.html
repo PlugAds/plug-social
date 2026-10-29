@@ -729,6 +729,17 @@ async function verificarSessao() {
   .sidebar .user-pill:hover { background:rgba(255,255,255,.08); }
   .sidebar .user-name { color:#fff; } .sidebar .user-role { color:rgba(255,255,255,.6); }
   .sidebar .btn-link { color:rgba(255,255,255,.6); } .sidebar .btn-link:hover { color:#fff;background:rgba(255,255,255,.08); }
+  .sidebar .nav { scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent; }
+  /* telas baixas (notebook, zoom alto): menu mais compacto para todos os itens caberem sem rolar */
+  @media (max-height:780px) {
+    .sidebar .logo { padding:14px 20px 12px; }
+    .sidebar .logo .marca-plug-branca { width:120px !important; }
+    .sidebar .nav { padding:8px 12px; }
+    .sidebar .nav-section { padding:8px 8px 3px; }
+    .sidebar .nav-item { padding:6px 10px; }
+    .sidebar .sidebar-bottom { padding:8px 12px; }
+    .sidebar .sidebar-bottom .btn-link { margin-top:0 !important;padding-top:4px;padding-bottom:4px; }
+  }
 
   /* ── RELATÓRIO NO TIMBRADO ── */
   .rel-timbrado-fundo { display:none; }
