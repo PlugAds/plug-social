@@ -1160,6 +1160,7 @@ async function verificarSessao() {
           <option value="sem">Sem resposta</option>
         </select>
         <button class="btn btn-ghost btn-sm" onclick="inboxCarregar()">↻ Atualizar</button>
+        <button class="btn btn-ghost btn-sm" onclick="inboxReconectar()" title="Autoriza de novo este cliente na Meta, incluindo a permissão de responder comentários">🔑 Liberar respostas</button>
       </div>
       <div id="inbox-aviso"></div>
       <div id="inbox-lista"></div>
@@ -2479,13 +2480,22 @@ async function inboxResponder(pi, ci) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ message: msg, access_token: c.meta_token })
     }).then(r => r.json());
-    if (json.error) throw new Error(json.error.message);
+    if (json.error) { const err = new Error(json.error.message); err.codigo = json.error.code; throw err; }
     com.respostas.push({ id: json.id, texto: msg, autor: c.nome, data: new Date().toISOString(), proprio: true });
     showToast('✅ Resposta enviada!');
     inboxRender();
   } catch (e) {
-    showToast('❌ ' + (e.message || 'Erro ao responder.'));
-    input.disabled = false;
+    const semPermissao = [10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss/i.test(e.message || '');
+    if (semPermissao) {
+      // A leitura funcionou, mas a conexão deste cliente não tem a permissão de responder: oferece reconectar
+      inboxErros = inboxErros.filter(x => x.rede !== post.rede);
+      inboxErros.push({ rede: post.rede, codigo: e.codigo || 200, msg: e.message });
+      showToast('❌ Falta a permissão de responder neste cliente. Clique em "Reconectar e liberar comentários".');
+      inboxRender();
+    } else {
+      showToast('❌ ' + (e.message || 'Erro ao responder.'));
+      input.disabled = false;
+    }
   }
 }
 
