@@ -688,7 +688,24 @@ async function verificarSessao() {
   .empty-state-text { font-size:13px;line-height:1.6; }
 
   /* PENDING BANNER */
-  .pending-banner { background:rgba(217,119,6,0.08);border:1px solid rgba(217,119,6,0.2);border-radius:10px;padding:14px 18px;font-size:13px;color:var(--yellow);line-height:1.6;margin-bottom:20px; }
+  .inbox-post { background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow:hidden; }
+.inbox-post-topo { display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface2); }
+.inbox-thumb { width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--border);flex-shrink:0; }
+.inbox-post-texto { flex:1;min-width:0;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.inbox-com { padding:12px 16px;border-bottom:1px solid var(--border); }
+.inbox-com:last-child { border-bottom:none; }
+.inbox-com-topo { font-size:12px;color:var(--text3);margin-bottom:4px; }
+.inbox-com-topo strong { color:var(--text);font-size:13px; }
+.inbox-com-texto { font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word; }
+.inbox-resp-feita { margin:8px 0 0 14px;padding-left:10px;border-left:2px solid var(--border);font-size:12px;line-height:1.5;color:var(--text2);white-space:pre-wrap;word-break:break-word; }
+.inbox-resp-feita.propria { border-left-color:var(--accent); }
+.inbox-resp-form { display:flex;gap:8px;margin-top:10px; }
+.inbox-resp-form input { flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;font-family:'Exo',sans-serif;outline:none; }
+.inbox-resp-form input:focus { border-color:var(--accent); }
+.inbox-rede-tag { display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-right:6px; }
+.inbox-rede-tag.ig { background:rgba(225,48,108,.12);color:var(--ig); }
+.inbox-rede-tag.fb { background:rgba(24,119,242,.12);color:var(--fb); }
+.pending-banner { background:rgba(217,119,6,0.08);border:1px solid rgba(217,119,6,0.2);border-radius:10px;padding:14px 18px;font-size:13px;color:var(--yellow);line-height:1.6;margin-bottom:20px; }
 
   ::-webkit-scrollbar { width:4px; }
   ::-webkit-scrollbar-track { background:var(--surface2); }
@@ -1131,14 +1148,22 @@ async function verificarSessao() {
 
     <!-- INBOX -->
     <div class="panel" id="panel-inbox">
-      <div class="pending-banner">
-        ⚠️ <strong>Inbox em breve:</strong> a integração com mensagens e comentários reais do Instagram e Facebook requer aprovação adicional do Meta (permissões <code>pages_messaging</code> e <code>instagram_manage_comments</code>). Assim que aprovado, as conversas aparecerão aqui em tempo real.
+      <div class="pub-filters">
+        <select class="pub-filter-input" id="inbox-cliente" onchange="inboxCarregar()" style="min-width:200px"></select>
+        <select class="pub-filter-input" id="inbox-rede" onchange="inboxRender()">
+          <option value="">Instagram e Facebook</option>
+          <option value="ig">Só Instagram</option>
+          <option value="fb">Só Facebook</option>
+        </select>
+        <select class="pub-filter-input" id="inbox-filtro" onchange="inboxRender()">
+          <option value="">Todos os comentários</option>
+          <option value="sem">Sem resposta</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="inboxCarregar()">↻ Atualizar</button>
       </div>
-      <div class="empty-state">
-        <div class="empty-state-icon">💬</div>
-        <div class="empty-state-title">Inbox aguardando aprovação</div>
-        <div class="empty-state-text">Quando o Meta aprovar as permissões de mensagens,<br>todas as conversas dos seus clientes aparecerão aqui.</div>
-      </div>
+      <div id="inbox-aviso"></div>
+      <div id="inbox-lista"></div>
+      <div style="font-size:12px;color:var(--text3);margin-top:12px">Mostra os comentários dos últimos 12 posts de cada rede. Mensagens diretas ficam para uma próxima etapa (dependem de aprovação da Meta).</div>
     </div>
 
     <!-- ARMAZENAMENTO -->
@@ -1406,6 +1431,7 @@ function showPanel(id, btn, daHistoria) {
   document.getElementById('page-title').textContent = titles[id] || id;
   alternarMenu(false);
   // Cada tela tem seu endereço (#publicacoes): o botão voltar do navegador passa entre as telas e recarregar mantém a tela
+  if (id === 'inbox') inboxAoAbrir();
   if (!daHistoria && location.hash !== '#' + id) {
     try { history.pushState({ painel: id }, '', '#' + id); } catch (e) {}
   }
@@ -2300,6 +2326,177 @@ function preencherFormulario(r) {
   });
   updatePreview();
   showPanel('agendar', document.querySelector('[onclick*=agendar]'));
+}
+
+// ── INBOX (COMENTÁRIOS) ──
+// Lê e responde comentários de Instagram e Facebook com o token da página de cada cliente.
+// Os tokens antigos não têm as permissões de comentários: nesse caso o cliente precisa reconectar (botão no aviso).
+const META_SCOPE_COMENTARIOS = META_SCOPE + ',instagram_manage_comments,pages_manage_engagement,pages_read_user_content';
+const INBOX_LIMITE_POSTS = 12;
+let inboxPosts = [];
+let inboxErros = [];
+let inboxClienteCarregado = null;
+
+function inboxClienteAtual() {
+  return allClientes.find(c => c.id === document.getElementById('inbox-cliente').value);
+}
+
+function inboxAoAbrir() {
+  const sel = document.getElementById('inbox-cliente');
+  const atual = sel.value;
+  const conectados = allClientes.filter(c => c.meta_token && (c.meta_page_id || c.meta_ig_id));
+  sel.innerHTML = conectados.map(c => `<option value="${c.id}">${escHtml(c.nome)}</option>`).join('');
+  if (conectados.some(c => c.id === atual)) sel.value = atual;
+  if (!conectados.length) {
+    document.getElementById('inbox-aviso').innerHTML = '';
+    document.getElementById('inbox-lista').innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">Nenhum cliente com Facebook/Instagram conectado</div><div class="empty-state-text">Conecte uma página na tela de Clientes para ver os comentários aqui.</div></div>';
+    return;
+  }
+  if (inboxClienteCarregado !== sel.value) inboxCarregar();
+}
+
+function inboxData(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+  return isNaN(d) ? '' : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+async function inboxCarregar() {
+  const c = inboxClienteAtual();
+  const lista = document.getElementById('inbox-lista');
+  if (!c) return;
+  inboxClienteCarregado = c.id;
+  inboxPosts = [];
+  inboxErros = [];
+  document.getElementById('inbox-aviso').innerHTML = '';
+  lista.innerHTML = '<div class="empty-state"><div class="empty-state-title">Carregando comentários…</div></div>';
+  const tarefas = [];
+  if (c.meta_ig_id) tarefas.push(inboxBuscarIG(c));
+  if (c.meta_page_id) tarefas.push(inboxBuscarFB(c));
+  await Promise.all(tarefas);
+  inboxPosts.sort((a, b) => new Date(b.data) - new Date(a.data));
+  inboxRender();
+}
+
+async function inboxBuscarIG(c) {
+  try {
+    const campos = 'id,caption,permalink,timestamp,media_url,thumbnail_url,comments.limit(25){id,text,username,timestamp,replies{id,text,username,timestamp}}';
+    const token = encodeURIComponent(c.meta_token);
+    const [res, perfil] = await Promise.all([
+      fetch(`https://graph.facebook.com/v19.0/${c.meta_ig_id}/media?fields=${encodeURIComponent(campos)}&limit=${INBOX_LIMITE_POSTS}&access_token=${token}`).then(r => r.json()),
+      fetch(`https://graph.facebook.com/v19.0/${c.meta_ig_id}?fields=username&access_token=${token}`).then(r => r.json()).catch(() => ({}))
+    ]);
+    if (res.error) { inboxErros.push({ rede: 'ig', codigo: res.error.code, msg: res.error.message }); return; }
+    const meuUsuario = perfil.username || null;
+    (res.data || []).forEach(m => {
+      const coms = (m.comments && m.comments.data) || [];
+      if (!coms.length) return;
+      inboxPosts.push({
+        rede: 'ig', id: m.id, texto: m.caption || '', url: m.permalink, thumb: m.thumbnail_url || m.media_url, data: m.timestamp,
+        comentarios: coms.map(k => ({
+          id: k.id, texto: k.text || '', autor: k.username || 'usuário', data: k.timestamp,
+          respostas: ((k.replies && k.replies.data) || []).map(r => ({ id: r.id, texto: r.text || '', autor: r.username || '', data: r.timestamp, proprio: !!meuUsuario && r.username === meuUsuario }))
+        }))
+      });
+    });
+  } catch (e) { inboxErros.push({ rede: 'ig', codigo: 0, msg: 'Não foi possível falar com o Instagram.' }); }
+}
+
+async function inboxBuscarFB(c) {
+  try {
+    const campos = 'id,message,permalink_url,created_time,full_picture,comments.limit(25){id,message,from,created_time,comments.limit(10){id,message,from,created_time}}';
+    const res = await fetch(`https://graph.facebook.com/v19.0/${c.meta_page_id}/posts?fields=${encodeURIComponent(campos)}&limit=${INBOX_LIMITE_POSTS}&access_token=${encodeURIComponent(c.meta_token)}`).then(r => r.json());
+    if (res.error) { inboxErros.push({ rede: 'fb', codigo: res.error.code, msg: res.error.message }); return; }
+    (res.data || []).forEach(p => {
+      const coms = (p.comments && p.comments.data) || [];
+      if (!coms.length) return;
+      inboxPosts.push({
+        rede: 'fb', id: p.id, texto: p.message || '', url: p.permalink_url, thumb: p.full_picture, data: p.created_time,
+        comentarios: coms.map(k => ({
+          id: k.id, texto: k.message || '', autor: (k.from && k.from.name) || 'Usuário do Facebook', data: k.created_time,
+          respostas: ((k.comments && k.comments.data) || []).map(r => ({ id: r.id, texto: r.message || '', autor: (r.from && r.from.name) || '', data: r.created_time, proprio: !!(r.from && r.from.id === c.meta_page_id) }))
+        }))
+      });
+    });
+  } catch (e) { inboxErros.push({ rede: 'fb', codigo: 0, msg: 'Não foi possível falar com o Facebook.' }); }
+}
+
+function inboxRender() {
+  const aviso = document.getElementById('inbox-aviso');
+  const lista = document.getElementById('inbox-lista');
+  const rede = document.getElementById('inbox-rede').value;
+  const soSem = document.getElementById('inbox-filtro').value === 'sem';
+  const nomeRede = { ig: 'Instagram', fb: 'Facebook' };
+
+  aviso.innerHTML = inboxErros.filter(e => !rede || e.rede === rede).map(e => {
+    const semPermissao = [10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss|token|session/i.test(e.msg);
+    return `<div class="pending-banner">⚠️ <strong>${nomeRede[e.rede]}:</strong> ${semPermissao
+      ? 'este cliente ainda não liberou a leitura de comentários (ou a conexão venceu). <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="inboxReconectar()">Reconectar e liberar comentários</button>'
+      : escHtml(e.msg)}</div>`;
+  }).join('');
+
+  let html = '';
+  inboxPosts.forEach((p, pi) => {
+    if (rede && p.rede !== rede) return;
+    const coms = p.comentarios.map((k, ci) => ({ k, ci })).filter(({ k }) => !soSem || k.respostas.length === 0);
+    if (!coms.length) return;
+    html += `<div class="inbox-post">
+      <div class="inbox-post-topo">
+        ${p.thumb ? `<img class="inbox-thumb" src="${escHtml(p.thumb)}" alt="">` : '<div class="inbox-thumb"></div>'}
+        <div class="inbox-post-texto"><span class="inbox-rede-tag ${p.rede}">${p.rede === 'ig' ? 'IG' : 'FB'}</span>${escHtml(p.texto || '(post sem legenda)')}</div>
+        ${p.url ? `<a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none;display:inline-flex;align-items:center">Abrir post ↗</a>` : ''}
+      </div>
+      ${coms.map(({ k, ci }) => `<div class="inbox-com">
+        <div class="inbox-com-topo"><strong>${escHtml(k.autor)}</strong> · ${inboxData(k.data)}</div>
+        <div class="inbox-com-texto">${escHtml(k.texto)}</div>
+        ${k.respostas.map(r => `<div class="inbox-resp-feita${r.proprio ? ' propria' : ''}"><strong>${escHtml(r.autor)}${r.proprio ? ' (nós)' : ''}</strong> · ${inboxData(r.data)}<br>${escHtml(r.texto)}</div>`).join('')}
+        <div class="inbox-resp-form">
+          <input type="text" id="inbox-resp-${pi}-${ci}" placeholder="Responder…" onkeydown="if(event.key==='Enter')inboxResponder(${pi},${ci})">
+          <button class="btn btn-primary btn-sm" onclick="inboxResponder(${pi},${ci})">Responder</button>
+        </div>
+      </div>`).join('')}
+    </div>`;
+  });
+
+  lista.innerHTML = html || `<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">${soSem ? 'Nenhum comentário sem resposta' : 'Nenhum comentário nos últimos posts'}</div></div>`;
+}
+
+async function inboxResponder(pi, ci) {
+  const post = inboxPosts[pi];
+  const com = post && post.comentarios[ci];
+  const input = document.getElementById(`inbox-resp-${pi}-${ci}`);
+  const c = inboxClienteAtual();
+  if (!com || !input || !c) return;
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.disabled = true;
+  const url = post.rede === 'ig'
+    ? `https://graph.facebook.com/v19.0/${com.id}/replies`
+    : `https://graph.facebook.com/v19.0/${com.id}/comments`;
+  try {
+    const json = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ message: msg, access_token: c.meta_token })
+    }).then(r => r.json());
+    if (json.error) throw new Error(json.error.message);
+    com.respostas.push({ id: json.id, texto: msg, autor: c.nome, data: new Date().toISOString(), proprio: true });
+    showToast('✅ Resposta enviada!');
+    inboxRender();
+  } catch (e) {
+    showToast('❌ ' + (e.message || 'Erro ao responder.'));
+    input.disabled = false;
+  }
+}
+
+// Abre a autorização da Meta pedindo também as permissões de comentários (auth_type=rerequest mostra a tela de novo)
+function inboxReconectar() {
+  const c = inboxClienteAtual();
+  if (!c) return;
+  const state = encodeURIComponent(JSON.stringify({ clienteId: c.id, clienteNome: c.nome }));
+  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_COMENTARIOS}&state=${state}&response_type=code&auth_type=rerequest`;
+  window.open(url, '_blank', 'width=620,height=700');
+  showToast('Janela de autorização aberta! Depois, selecione a página do cliente.');
 }
 
 // ── CALENDÁRIO ──
