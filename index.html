@@ -62,7 +62,11 @@ async function dbSalvarPost(p) {
   return data;
 }
 async function dbAtualizarPost(id, campos) { await supa.from('posts').update(campos).eq('id',id); }
-async function dbDeletarPost(id) { await supa.from('posts').delete().eq('id',id); }
+async function dbDeletarPost(id) {
+  const { error } = await supa.from('posts').delete().eq('id',id);
+  if (error) { console.error(error); return false; }
+  return true;
+}
 
 async function dbCarregarRascunhos() {
   const { data, error } = await supa.from('rascunhos').select('*').order('criado_em',{ascending:false});
@@ -74,7 +78,16 @@ async function dbSalvarRascunho(p) {
   if (error) { console.error(error); return null; }
   return data;
 }
-async function dbDeletarRascunho(id) { await supa.from('rascunhos').delete().eq('id',id); }
+async function dbDeletarRascunho(id) {
+  const { error } = await supa.from('rascunhos').delete().eq('id',id);
+  if (error) { console.error(error); return false; }
+  return true;
+}
+async function dbAtualizarRascunho(id, campos) {
+  const { error } = await supa.from('rascunhos').update(campos).eq('id',id);
+  if (error) { console.error(error); return false; }
+  return true;
+}
 
 async function dbCarregarPerfil() {
   const { data } = await supa.from('perfil').select('*').limit(1).single();
@@ -1343,6 +1356,8 @@ async function verificarSessao() {
 // ── STATE ──
 let allPosts = [];
 let allRascunhos = [];
+// Rascunho carregado no formulário: ao agendar vira post e sai da lista de rascunhos; ao salvar de novo é atualizado (sem duplicar)
+let rascunhoEmEdicao = null;
 let allClientes = [];
 let pubFilter = 'agendado';
 let _salvando = false; // flag anti-clique-duplo
@@ -1864,6 +1879,15 @@ async function schedulePost() {
   const salvo = await dbSalvarPost(post);
   if (salvo) {
     allPosts.unshift(salvo);
+    // Veio de um rascunho: ele já virou post, então sai dos rascunhos (as mídias passam a ser do post, não apagar)
+    if (rascunhoEmEdicao) {
+      const idRascunho = rascunhoEmEdicao;
+      if (await dbDeletarRascunho(idRascunho)) {
+        allRascunhos = allRascunhos.filter(p => p.id !== idRascunho);
+      } else {
+        showToast('⚠️ Post agendado, mas não consegui remover o rascunho. Exclua-o manualmente.');
+      }
+    }
     renderDashboard();
     renderPubTable();
     renderCalendar();
@@ -1890,6 +1914,21 @@ async function saveDraft() {
   const imgSrc = mediaFiles.length > 0 ? mediaFiles[0].src : null;
 
   const draft = {cliente_nome:client, legenda:caption, redes:nets, data_pub:date||null, hora_pub:time||null, tipo:type, midia_url:imgSrc, midia_urls:mediaFiles.map(f => f.src)};
+  if (rascunhoEmEdicao) {
+    // Editando um rascunho existente: atualiza em vez de criar uma cópia
+    const idRascunho = rascunhoEmEdicao;
+    if (await dbAtualizarRascunho(idRascunho, draft)) {
+      allRascunhos = allRascunhos.map(p => p.id === idRascunho ? { ...p, ...draft } : p);
+      renderDashboard();
+      renderCalendar();
+      renderPubTable();
+      showToast('Rascunho atualizado!');
+      clearForm();
+    } else {
+      showToast('❌ Não foi possível atualizar o rascunho.');
+    }
+    return;
+  }
   const salvo = await dbSalvarRascunho(draft);
   if (salvo) {
     allRascunhos.unshift(salvo);
@@ -1902,6 +1941,7 @@ async function saveDraft() {
 }
 
 function clearForm() {
+  rascunhoEmEdicao = null;
   document.getElementById('sched-client').value = '';
   document.getElementById('sched-caption').value = '';
   document.getElementById('sched-type').value = 'post';
@@ -1999,7 +2039,7 @@ function renderPubTable() {
 async function deletarPost(id) {
   if (!confirm('Excluir este post?')) return;
   const post = allPosts.find(p => p.id === id);
-  await dbDeletarPost(id);
+  if (!(await dbDeletarPost(id))) { showToast('❌ Não foi possível excluir o post.'); return; }
   allPosts = allPosts.filter(p => p.id !== id);
   if (post && !post.midia_removida) apagarMidiasSemUso(caminhosDaMidia(post));
   renderPubTable();
@@ -2010,8 +2050,9 @@ async function deletarPost(id) {
 async function deletarRascunho(id) {
   if (!confirm('Excluir este rascunho?')) return;
   const rascunho = allRascunhos.find(p => p.id === id);
-  await dbDeletarRascunho(id);
+  if (!(await dbDeletarRascunho(id))) { showToast('❌ Não foi possível excluir o rascunho.'); return; }
   allRascunhos = allRascunhos.filter(p => p.id !== id);
+  if (rascunhoEmEdicao === id) rascunhoEmEdicao = null;
   if (rascunho) apagarMidiasSemUso(caminhosDaMidia(rascunho));
   renderPubTable();
   renderDashboard();
@@ -2166,6 +2207,7 @@ function recarregarPostsEm(segundos, tentativa = 1) {
 function editarRascunho(id) {
   const r = allRascunhos.find(p => p.id === id);
   if (!r) return;
+  rascunhoEmEdicao = id;
   document.getElementById('sched-client').value = r.cliente_nome || '';
   document.getElementById('sched-caption').value = r.legenda || '';
   document.getElementById('sched-type').value = r.tipo || 'post';
