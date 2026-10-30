@@ -688,7 +688,11 @@ async function verificarSessao() {
   .empty-state-text { font-size:13px;line-height:1.6; }
 
   /* PENDING BANNER */
-  .inbox-post { background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow:hidden; }
+  .inbox-abas { display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border); }
+.inbox-aba { background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 16px;font-size:13px;font-family:'Exo',sans-serif;color:var(--text2);cursor:pointer; }
+.inbox-aba:hover { color:var(--text); }
+.inbox-aba.active { color:var(--text);font-weight:600;border-bottom-color:var(--accent); }
+.inbox-post { background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow:hidden; }
 .inbox-post-topo { display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface2); }
 .inbox-thumb { width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--border);flex-shrink:0; }
 .inbox-post-texto { flex:1;min-width:0;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -1148,6 +1152,11 @@ async function verificarSessao() {
 
     <!-- INBOX -->
     <div class="panel" id="panel-inbox">
+      <div class="inbox-abas">
+        <button class="inbox-aba active" id="inbox-aba-comentarios" onclick="inboxAba('comentarios')">💬 Comentários</button>
+        <button class="inbox-aba" id="inbox-aba-mensagens" onclick="inboxAba('mensagens')">✉️ Mensagens</button>
+      </div>
+      <div id="inbox-sec-comentarios">
       <div class="pub-filters">
         <select class="pub-filter-input" id="inbox-cliente" onchange="inboxCarregar()" style="min-width:200px"></select>
         <select class="pub-filter-input" id="inbox-rede" onchange="inboxRender()">
@@ -1164,7 +1173,18 @@ async function verificarSessao() {
       </div>
       <div id="inbox-aviso"></div>
       <div id="inbox-lista"></div>
-      <div style="font-size:12px;color:var(--text3);margin-top:12px">Mostra os comentários dos últimos 12 posts de cada rede. Mensagens diretas ficam para uma próxima etapa (dependem de aprovação da Meta).</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:12px">Mostra os comentários dos últimos 12 posts de cada rede.</div>
+      </div>
+      <div id="inbox-sec-mensagens" style="display:none">
+        <div class="pending-banner">
+          ⚠️ <strong>Mensagens em breve:</strong> as mensagens diretas do Instagram (Direct) e do Facebook (Messenger) dependem de permissões que ainda precisam de aprovação da Meta (<code>pages_messaging</code> e <code>instagram_manage_messages</code>).
+        </div>
+        <div class="empty-state">
+          <div class="empty-state-icon">✉️</div>
+          <div class="empty-state-title">Mensagens ainda não disponíveis</div>
+          <div class="empty-state-text">Por enquanto, use a aba Comentários.</div>
+        </div>
+      </div>
     </div>
 
     <!-- ARMAZENAMENTO -->
@@ -2337,6 +2357,14 @@ const INBOX_LIMITE_POSTS = 12;
 let inboxPosts = [];
 let inboxErros = [];
 let inboxClienteCarregado = null;
+
+// Abas do Inbox: comentários (pronto) e mensagens diretas (ainda não disponível)
+function inboxAba(nome) {
+  ['comentarios', 'mensagens'].forEach(a => {
+    document.getElementById('inbox-sec-' + a).style.display = a === nome ? '' : 'none';
+    document.getElementById('inbox-aba-' + a).classList.toggle('active', a === nome);
+  });
+}
 
 function inboxClienteAtual() {
   return allClientes.find(c => c.id === document.getElementById('inbox-cliente').value);
