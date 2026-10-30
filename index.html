@@ -706,6 +706,11 @@ async function verificarSessao() {
 .inbox-resp-form { display:flex;gap:8px;margin-top:10px; }
 .inbox-resp-form input { flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;font-family:'Exo',sans-serif;outline:none; }
 .inbox-resp-form input:focus { border-color:var(--accent); }
+.msg-fio { display:flex;flex-direction:column;gap:6px;padding:14px 16px;max-height:340px;overflow-y:auto; }
+.msg-balao { max-width:78%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word; }
+.msg-balao.contato { align-self:flex-start;background:var(--surface2);border-top-left-radius:4px; }
+.msg-balao.propria { align-self:flex-end;background:var(--accent-suave);border-top-right-radius:4px; }
+.msg-hora { font-size:10px;color:var(--text3);margin-top:3px; }
 .inbox-rede-tag { display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-right:6px; }
 .inbox-rede-tag.ig { background:rgba(225,48,108,.12);color:var(--ig); }
 .inbox-rede-tag.fb { background:rgba(24,119,242,.12);color:var(--fb); }
@@ -1176,14 +1181,23 @@ async function verificarSessao() {
       <div style="font-size:12px;color:var(--text3);margin-top:12px">Mostra os comentários dos últimos 12 posts de cada rede.</div>
       </div>
       <div id="inbox-sec-mensagens" style="display:none">
-        <div class="pending-banner">
-          ⚠️ <strong>Mensagens em breve:</strong> as mensagens diretas do Instagram (Direct) e do Facebook (Messenger) dependem de permissões que ainda precisam de aprovação da Meta (<code>pages_messaging</code> e <code>instagram_manage_messages</code>).
+        <div class="pub-filters">
+          <select class="pub-filter-input" id="msg-cliente" onchange="mensagensCarregar()" style="min-width:200px"></select>
+          <select class="pub-filter-input" id="msg-rede" onchange="mensagensRender()">
+            <option value="">Instagram e Facebook</option>
+            <option value="ig">Só Instagram (Direct)</option>
+            <option value="fb">Só Facebook (Messenger)</option>
+          </select>
+          <select class="pub-filter-input" id="msg-filtro" onchange="mensagensRender()">
+            <option value="">Todas as conversas</option>
+            <option value="sem">Aguardando nossa resposta</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="mensagensCarregar()">↻ Atualizar</button>
+          <button class="btn btn-ghost btn-sm" onclick="mensagensReconectar()" title="Autoriza de novo este cliente na Meta, incluindo as permissões de mensagens">🔑 Liberar mensagens</button>
         </div>
-        <div class="empty-state">
-          <div class="empty-state-icon">✉️</div>
-          <div class="empty-state-title">Mensagens ainda não disponíveis</div>
-          <div class="empty-state-text">Por enquanto, use a aba Comentários.</div>
-        </div>
+        <div id="msg-aviso"></div>
+        <div id="msg-lista"></div>
+        <div style="font-size:12px;color:var(--text3);margin-top:12px">Mostra as 15 conversas mais recentes de cada rede. A Meta só permite responder até 24 horas depois da última mensagem do contato. No Instagram, ative "Permitir acesso às mensagens" nas configurações de mensagens da conta.</div>
       </div>
     </div>
 
@@ -2364,6 +2378,7 @@ function inboxAba(nome) {
     document.getElementById('inbox-sec-' + a).style.display = a === nome ? '' : 'none';
     document.getElementById('inbox-aba-' + a).classList.toggle('active', a === nome);
   });
+  if (nome === 'mensagens') mensagensAoAbrir();
 }
 
 function inboxClienteAtual() {
@@ -2527,14 +2542,158 @@ async function inboxResponder(pi, ci) {
   }
 }
 
-// Abre a autorização da Meta pedindo também as permissões de comentários (auth_type=rerequest mostra a tela de novo)
-function inboxReconectar() {
-  const c = inboxClienteAtual();
+// Abre a autorização da Meta pedindo também as permissões extras (auth_type=rerequest mostra a tela de novo)
+function metaReautorizar(c, scope) {
   if (!c) return;
   const state = encodeURIComponent(JSON.stringify({ clienteId: c.id, clienteNome: c.nome }));
-  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${META_SCOPE_COMENTARIOS}&state=${state}&response_type=code&auth_type=rerequest`;
+  const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT)}&scope=${scope}&state=${state}&response_type=code&auth_type=rerequest`;
   window.open(url, '_blank', 'width=620,height=700');
   showToast('Janela de autorização aberta! Depois, selecione a página do cliente.');
+}
+function inboxReconectar() { metaReautorizar(inboxClienteAtual(), META_SCOPE_COMENTARIOS); }
+
+// ── MENSAGENS (DIRECT E MESSENGER) ──
+// Busca as conversas quando a aba abre ou no "Atualizar" (sem webhooks). Responder só vale até 24h depois da última mensagem do contato.
+const META_SCOPE_MENSAGENS = META_SCOPE_COMENTARIOS + ',pages_messaging,instagram_manage_messages';
+const MSG_LIMITE_CONVERSAS = 15;
+const MSG_JANELA_MS = 24 * 60 * 60 * 1000;
+let msgConversas = [];
+let msgErros = [];
+let msgClienteCarregado = null;
+
+function mensagensClienteAtual() {
+  return allClientes.find(c => c.id === document.getElementById('msg-cliente').value);
+}
+function mensagensReconectar() { metaReautorizar(mensagensClienteAtual(), META_SCOPE_MENSAGENS); }
+
+function mensagensAoAbrir() {
+  const sel = document.getElementById('msg-cliente');
+  const atual = sel.value;
+  const conectados = allClientes.filter(c => c.meta_token && c.meta_page_id);
+  sel.innerHTML = conectados.map(c => `<option value="${c.id}">${escHtml(c.nome)}</option>`).join('');
+  if (conectados.some(c => c.id === atual)) sel.value = atual;
+  if (!conectados.length) {
+    document.getElementById('msg-aviso').innerHTML = '';
+    document.getElementById('msg-lista').innerHTML = '<div class="empty-state"><div class="empty-state-icon">✉️</div><div class="empty-state-title">Nenhum cliente com página conectada</div><div class="empty-state-text">Conecte uma página na tela de Clientes para ver as mensagens aqui.</div></div>';
+    return;
+  }
+  if (msgClienteCarregado !== sel.value) mensagensCarregar();
+}
+
+async function mensagensCarregar() {
+  const c = mensagensClienteAtual();
+  if (!c) return;
+  msgClienteCarregado = c.id;
+  msgConversas = [];
+  msgErros = [];
+  document.getElementById('msg-aviso').innerHTML = '';
+  document.getElementById('msg-lista').innerHTML = '<div class="empty-state"><div class="empty-state-title">Carregando conversas…</div></div>';
+  const tarefas = [mensagensBuscar(c, 'messenger')];
+  if (c.meta_ig_id) tarefas.push(mensagensBuscar(c, 'instagram'));
+  await Promise.all(tarefas);
+  msgConversas.sort((a, b) => new Date(b.data) - new Date(a.data));
+  mensagensRender();
+}
+
+async function mensagensBuscar(c, plataforma) {
+  const rede = plataforma === 'instagram' ? 'ig' : 'fb';
+  try {
+    const campos = `id,updated_time,participants,messages.limit(12){id,message,from,created_time}`;
+    const res = await fetch(`https://graph.facebook.com/v19.0/${c.meta_page_id}/conversations?platform=${plataforma}&fields=${encodeURIComponent(campos)}&limit=${MSG_LIMITE_CONVERSAS}&access_token=${encodeURIComponent(c.meta_token)}`).then(r => r.json());
+    if (res.error) { msgErros.push({ rede, codigo: res.error.code, msg: res.error.message }); return; }
+    const meusIds = [c.meta_page_id, c.meta_ig_id].filter(Boolean);
+    (res.data || []).forEach(cv => {
+      const contato = ((cv.participants && cv.participants.data) || []).find(p => !meusIds.includes(p.id));
+      const msgs = ((cv.messages && cv.messages.data) || []).map(m => ({
+        id: m.id, texto: m.message || '', data: m.created_time,
+        propria: !!(m.from && meusIds.includes(m.from.id))
+      })).reverse();
+      const ultimaDoContato = [...msgs].reverse().find(m => !m.propria);
+      msgConversas.push({
+        rede, id: cv.id, data: cv.updated_time, msgs,
+        contato: { id: contato && contato.id, nome: (contato && (contato.name || contato.username)) || 'Contato' },
+        aberta: !!ultimaDoContato && (Date.now() - new Date(String(ultimaDoContato.data).replace(/([+-]\d\d)(\d\d)$/, '$1:$2')).getTime()) < MSG_JANELA_MS
+      });
+    });
+  } catch (e) { msgErros.push({ rede, codigo: 0, msg: 'Não foi possível falar com ' + (rede === 'ig' ? 'o Instagram.' : 'o Facebook.') }); }
+}
+
+function mensagensRender() {
+  const aviso = document.getElementById('msg-aviso');
+  const lista = document.getElementById('msg-lista');
+  const rede = document.getElementById('msg-rede').value;
+  const soSem = document.getElementById('msg-filtro').value === 'sem';
+  const nomeRede = { ig: 'Instagram', fb: 'Facebook' };
+
+  aviso.innerHTML = msgErros.filter(e => !rede || e.rede === rede).map(e => {
+    const semPermissao = [10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss|token|session/i.test(e.msg);
+    return `<div class="pending-banner">⚠️ <strong>${nomeRede[e.rede]}:</strong> ${semPermissao
+      ? 'este cliente ainda não liberou a leitura de mensagens (ou a conexão venceu). <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="mensagensReconectar()">Reconectar e liberar mensagens</button>'
+      : escHtml(e.msg)}</div>`;
+  }).join('');
+
+  let html = '';
+  msgConversas.forEach((cv, i) => {
+    if (rede && cv.rede !== rede) return;
+    const ultima = cv.msgs[cv.msgs.length - 1];
+    if (soSem && (!ultima || ultima.propria)) return;
+    html += `<div class="inbox-post">
+      <div class="inbox-post-topo">
+        <div class="inbox-post-texto"><span class="inbox-rede-tag ${cv.rede}">${cv.rede === 'ig' ? 'IG' : 'FB'}</span><strong>${escHtml(cv.contato.nome)}</strong> · ${inboxData(cv.data)}</div>
+      </div>
+      <div class="msg-fio">
+        ${cv.msgs.map(m => `<div class="msg-balao ${m.propria ? 'propria' : 'contato'}">${escHtml(m.texto || '(anexo ou mídia)')}<div class="msg-hora">${inboxData(m.data)}</div></div>`).join('')}
+      </div>
+      ${cv.aberta && cv.contato.id
+        ? `<div class="inbox-resp-form" style="padding:0 16px 14px">
+            <input type="text" id="msg-resp-${i}" placeholder="Responder…" onkeydown="if(event.key==='Enter')mensagensResponder(${i})">
+            <button class="btn btn-primary btn-sm" onclick="mensagensResponder(${i})">Enviar</button>
+          </div>`
+        : `<div style="padding:0 16px 14px;font-size:12px;color:var(--text3)">⏳ Passou de 24 horas desde a última mensagem do contato: a Meta não permite responder por aqui.</div>`}
+    </div>`;
+  });
+
+  lista.innerHTML = html || `<div class="empty-state"><div class="empty-state-icon">✉️</div><div class="empty-state-title">${soSem ? 'Nenhuma conversa aguardando resposta' : 'Nenhuma conversa encontrada'}</div></div>`;
+}
+
+async function mensagensResponder(i) {
+  const cv = msgConversas[i];
+  const c = mensagensClienteAtual();
+  const input = document.getElementById(`msg-resp-${i}`);
+  if (!cv || !c || !input) return;
+  const texto = input.value.trim();
+  if (!texto) return;
+  input.disabled = true;
+  try {
+    const json = await fetch(`https://graph.facebook.com/v19.0/${c.meta_page_id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        recipient: JSON.stringify({ id: cv.contato.id }),
+        message: JSON.stringify({ text: texto }),
+        messaging_type: 'RESPONSE',
+        access_token: c.meta_token
+      })
+    }).then(r => r.json());
+    if (json.error) { const err = new Error(json.error.message); err.codigo = json.error.code; throw err; }
+    cv.msgs.push({ id: json.message_id, texto, data: new Date().toISOString(), propria: true });
+    showToast('✅ Mensagem enviada!');
+    mensagensRender();
+  } catch (e) {
+    if (/window|janela/i.test(e.message || '')) {
+      cv.aberta = false;
+      showToast('❌ A janela de 24 horas desta conversa já fechou.');
+      mensagensRender();
+    } else if ([10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss/i.test(e.message || '')) {
+      msgErros = msgErros.filter(x => x.rede !== cv.rede);
+      msgErros.push({ rede: cv.rede, codigo: e.codigo || 200, msg: e.message });
+      showToast('❌ Falta a permissão de enviar mensagens neste cliente. Clique em "Reconectar e liberar mensagens".');
+      mensagensRender();
+    } else {
+      showToast('❌ ' + (e.message || 'Erro ao enviar.'));
+      input.disabled = false;
+    }
+  }
 }
 
 // ── CALENDÁRIO ──
