@@ -324,7 +324,33 @@ function metaAbrirModal(clienteId, clienteNome, paginas) {
     div.addEventListener('click', function() { metaSalvarPagina(clienteId, p.id, p.name, p.token, div); });
     container.appendChild(div);
   });
+  document.getElementById('meta-modal-diag').innerHTML = '';
+  if (!paginas.length) metaModalDiagnostico(clienteId);
   modal.style.display = 'flex';
+}
+
+// Lista vazia: mostra o que a autorização salva consegue ver, para saber se a Meta liberou alguma página (só leitura)
+async function metaModalDiagnostico(clienteId) {
+  const el = document.getElementById('meta-modal-diag');
+  el.textContent = 'Verificando o que a Meta liberou…';
+  try {
+    const { data: cli } = await supa.from('clientes').select('meta_token').eq('id', clienteId).single();
+    if (!cli?.meta_token) { el.textContent = 'Nenhuma autorização salva para este cliente.'; return; }
+    const t = encodeURIComponent(cli.meta_token);
+    const [dbg, contas] = await Promise.all([
+      fetch(`https://graph.facebook.com/v19.0/debug_token?input_token=${t}&access_token=${t}`).then(r => r.json()),
+      fetch(`https://graph.facebook.com/v19.0/me/accounts?limit=50&access_token=${t}`).then(r => r.json())
+    ]);
+    const d = dbg.data || {};
+    const escopos = (d.scopes || []).join(', ') || '(nenhuma)';
+    const granulares = (d.granular_scopes || []).map(s => `${s.scope}: ${s.target_ids ? s.target_ids.length + ' item(ns)' : 'todas'}`).join('; ');
+    el.innerHTML = `<div style="background:var(--surface2);border-radius:8px;padding:10px 12px">
+      <strong>O que a Meta liberou nesta autorização</strong><br>
+      Permissões: ${escHtml(escopos)}<br>
+      ${granulares ? 'Páginas/contas por permissão: ' + escHtml(granulares) + '<br>' : ''}
+      Páginas encontradas: ${contas.error ? escHtml(contas.error.message) : (contas.data || []).length}
+      ${dbg.error ? '<br>' + escHtml(dbg.error.message) : ''}</div>`;
+  } catch (e) { el.textContent = 'Não foi possível verificar.'; }
 }
 
 async function metaSalvarIdManual() {
@@ -1175,6 +1201,7 @@ async function verificarSessao() {
         </select>
         <button class="btn btn-ghost btn-sm" onclick="inboxCarregar()">↻ Atualizar</button>
         <button class="btn btn-ghost btn-sm" onclick="inboxReconectar()" title="Autoriza de novo este cliente na Meta, incluindo a permissão de responder comentários">🔑 Liberar respostas</button>
+        <button class="btn btn-ghost btn-sm" onclick="diagnosticoConexao('inbox')" title="Só leitura: mostra o que a conexão deste cliente consegue enxergar na Meta">🩺 Testar conexão</button>
       </div>
       <div id="inbox-aviso"></div>
       <div id="inbox-lista"></div>
@@ -1194,6 +1221,7 @@ async function verificarSessao() {
           </select>
           <button class="btn btn-ghost btn-sm" onclick="mensagensCarregar()">↻ Atualizar</button>
           <button class="btn btn-ghost btn-sm" onclick="mensagensReconectar()" title="Autoriza de novo este cliente na Meta, incluindo as permissões de mensagens">🔑 Liberar mensagens</button>
+          <button class="btn btn-ghost btn-sm" onclick="diagnosticoConexao('msg')" title="Só leitura: mostra o que a conexão deste cliente consegue enxergar na Meta">🩺 Testar conexão</button>
         </div>
         <div id="msg-aviso"></div>
         <div id="msg-lista"></div>
@@ -1347,6 +1375,7 @@ async function verificarSessao() {
     </div>
     <div style="font-size:12px;color:var(--text3)">Escolha qual página será vinculada a este cliente:</div>
     <div id="meta-paginas-lista" style="overflow-y:auto;max-height:260px;display:flex;flex-direction:column;gap:8px"></div>
+    <div id="meta-modal-diag" style="font-size:12px;line-height:1.6;color:var(--text2)"></div>
     <!-- ID MANUAL -->
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Página não aparece na lista? Insira manualmente</div>
@@ -2476,7 +2505,7 @@ function inboxRender() {
     const semPermissao = [10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss|token|session/i.test(e.msg);
     return `<div class="pending-banner">⚠️ <strong>${nomeRede[e.rede]}:</strong> ${semPermissao
       ? 'este cliente ainda não liberou a leitura de comentários (ou a conexão venceu). <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="inboxReconectar()">Reconectar e liberar comentários</button>'
-      : escHtml(e.msg)}</div>`;
+      : escHtml(e.msg)}${semPermissao ? `<div style="font-size:11px;opacity:.8;margin-top:4px">Detalhe da Meta (código ${e.codigo}): ${escHtml(e.msg)}</div>` : ''}</div>`;
   }).join('');
 
   let html = '';
@@ -2551,6 +2580,46 @@ function metaReautorizar(c, scope) {
   showToast('Janela de autorização aberta! Depois, selecione a página do cliente.');
 }
 function inboxReconectar() { metaReautorizar(inboxClienteAtual(), META_SCOPE_COMENTARIOS); }
+
+// Diagnóstico (só leitura, não altera nada): mostra o que o token salvo deste cliente consegue enxergar na Meta
+async function diagnosticoConexao(origem) {
+  const c = origem === 'msg' ? mensagensClienteAtual() : inboxClienteAtual();
+  const alvo = document.getElementById(origem === 'msg' ? 'msg-aviso' : 'inbox-aviso');
+  if (!c || !alvo) return;
+  alvo.innerHTML = `<div class="pending-banner">🩺 Testando a conexão de ${escHtml(c.nome)}…</div>`;
+  const t = encodeURIComponent(c.meta_token);
+  const g = (caminho) => fetch(`https://graph.facebook.com/v19.0/${caminho}${caminho.includes('?') ? '&' : '?'}access_token=${t}`).then(r => r.json()).catch(e => ({ error: { code: 0, message: String(e) } }));
+  const [dbg, pagina, ig, midia, posts] = await Promise.all([
+    g(`debug_token?input_token=${t}`),
+    c.meta_page_id ? g(`${c.meta_page_id}?fields=name`) : null,
+    c.meta_ig_id ? g(`${c.meta_ig_id}?fields=username`) : null,
+    c.meta_ig_id ? g(`${c.meta_ig_id}/media?limit=1`) : null,
+    c.meta_page_id ? g(`${c.meta_page_id}/posts?limit=1`) : null
+  ]);
+  const linha = (rotulo, r, ok) => !r ? '' : `<div>${r.error ? '❌' : '✅'} <strong>${rotulo}:</strong> ${r.error ? escHtml(r.error.message) + ' (código ' + r.error.code + ')' : escHtml(ok(r))}</div>`;
+  const d = dbg.data || {};
+  const escopos = d.scopes || [];
+  const precisa = ['pages_read_engagement', 'pages_manage_engagement', 'instagram_manage_comments', 'pages_messaging', 'instagram_manage_messages'];
+  const faltando = precisa.filter(p => !escopos.includes(p));
+  const meusIds = [c.meta_page_id, c.meta_ig_id].filter(Boolean);
+  const granulares = (d.granular_scopes || []).filter(s => precisa.includes(s.scope) || ['pages_show_list', 'instagram_basic'].includes(s.scope)).map(s => {
+    const ids = s.target_ids;
+    const inclui = !ids || ids.some(i => meusIds.includes(String(i)));
+    return `<div>${inclui ? '✅' : '❌'} <code>${escHtml(s.scope)}</code>: ${ids ? ids.length + ' página(s)/conta(s) liberada(s)' : 'todas'}${inclui ? '' : ' — <strong>não inclui a página/conta deste cliente</strong>'}</div>`;
+  }).join('');
+  const tokenInfo = dbg.error
+    ? `<div>❌ <strong>Token:</strong> ${escHtml(dbg.error.message)} (código ${dbg.error.code})</div>`
+    : `<div>${d.is_valid ? '✅' : '❌'} <strong>Token:</strong> tipo ${escHtml(d.type || '?')}, ${d.is_valid ? 'válido' : 'INVÁLIDO'}, expira: ${d.expires_at ? new Date(d.expires_at * 1000).toLocaleDateString('pt-BR') : 'nunca'}</div>
+       ${d.type === 'USER' ? '<div>⚠️ O sistema guardou um token de <strong>usuário</strong>, e não da página. Ao reconectar, é preciso escolher a página no fim do processo.</div>' : ''}
+       <div>${faltando.length ? '❌' : '✅'} <strong>Permissões do token:</strong> ${faltando.length ? 'faltam ' + faltando.map(escHtml).join(', ') : 'todas as de comentários e mensagens estão liberadas'}</div>
+       ${granulares}`;
+  alvo.innerHTML = `<div class="pending-banner" style="line-height:1.8"><strong>🩺 Diagnóstico de ${escHtml(c.nome)}</strong> (só leitura, nada foi alterado)
+    ${tokenInfo}
+    ${linha('Página do Facebook', pagina, r => r.name)}
+    ${linha('Instagram', ig, r => '@' + r.username)}
+    ${linha('Ler posts do Facebook', posts, r => 'ok')}
+    ${linha('Ler posts do Instagram', midia, r => 'ok')}</div>`;
+}
 
 // ── MENSAGENS (DIRECT E MESSENGER) ──
 // Busca as conversas quando a aba abre ou no "Atualizar" (sem webhooks). Responder só vale até 24h depois da última mensagem do contato.
@@ -2629,7 +2698,7 @@ function mensagensRender() {
     const semPermissao = [10, 200, 190, 102, 3].includes(e.codigo) || /permission|permiss|token|session/i.test(e.msg);
     return `<div class="pending-banner">⚠️ <strong>${nomeRede[e.rede]}:</strong> ${semPermissao
       ? 'este cliente ainda não liberou a leitura de mensagens (ou a conexão venceu). <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="mensagensReconectar()">Reconectar e liberar mensagens</button>'
-      : escHtml(e.msg)}</div>`;
+      : escHtml(e.msg)}${semPermissao ? `<div style="font-size:11px;opacity:.8;margin-top:4px">Detalhe da Meta (código ${e.codigo}): ${escHtml(e.msg)}</div>` : ''}</div>`;
   }).join('');
 
   let html = '';
